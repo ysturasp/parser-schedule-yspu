@@ -1,17 +1,52 @@
 /**
- * Парсит XLSX с Google Диска и возвращает данные в JSON.
- * Не требует конвертации файла!
+ * Получает список всех файлов из указанной папки Google Drive
  */
-function getExcelDataAsJson() {
-  const fileId = "15PhdKlJ0eMO7bILaAJKVcuA3_uJgjGAy";
+function getFilesFromFolder(folderId) {
+  const folder = DriveApp.getFolderById(folderId);
+  const files = folder.getFiles();
+  const fileList = [];
+  
+  while (files.hasNext()) {
+    const file = files.next();
+    if (file.getMimeType() === MimeType.MICROSOFT_EXCEL) {
+      fileList.push({
+        id: file.getId(),
+        name: file.getName()
+      });
+    }
+  }
+  
+  return fileList;
+}
+
+/**
+ * Получает список всех доступных направлений
+ */
+function getDirections() {
+  const folderId = "1Uz9POR8Ni66-fc3Au0YrfeYOTNXYJWID";
+  const files = getFilesFromFolder(folderId);
+  
+  const directions = files.map(file => ({
+    id: file.id,
+    name: file.name.replace('.xlsx', '')
+  }));
+  
+  return ContentService.createTextOutput(JSON.stringify(directions, null, 2))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Получает расписание для конкретного направления
+ */
+function getDirectionSchedule(fileId) {
   const sheetName = "Table 1";
   
   const sheetJsUrl = "https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js";
   const sheetJsCode = UrlFetchApp.fetch(sheetJsUrl).getContentText();
   eval(sheetJsCode);
 
-  const file = DriveApp.getFileById(fileId);
-  const blob = file.getBlob();
+  const fileObj = DriveApp.getFileById(fileId);
+  const blob = fileObj.getBlob();
   const bytes = blob.getBytes();
   const uint8Array = new Uint8Array(bytes);
   
@@ -130,9 +165,25 @@ function getExcelDataAsJson() {
 /**
  * HTTP-обработчик для веб-API
  */
-function doGet() {
+function doGet(e) {
   try {
-    return getExcelDataAsJson();
+    if (!e || !e.parameter) {
+      return getDirections();
+    }
+    
+    const { action, id } = e.parameter;
+    
+    switch (action) {
+      case 'directions':
+        return getDirections();
+      case 'schedule':
+        if (!id) {
+          throw new Error('Не указан ID направления');
+        }
+        return getDirectionSchedule(id);
+      default:
+        throw new Error('Неизвестное действие');
+    }
   } catch (e) {
     return ContentService.createTextOutput(JSON.stringify({ 
       error: "Ошибка: " + e.message 
