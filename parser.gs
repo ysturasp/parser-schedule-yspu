@@ -81,10 +81,10 @@ function getDirections() {
   const cache = CacheService.getScriptCache();
   const cachedData = cache.get('directions_data');
   
-  if (cachedData) {
-    return ContentService.createTextOutput(cachedData)
-      .setMimeType(ContentService.MimeType.JSON);
-  }
+  // if (cachedData) {
+  //   return ContentService.createTextOutput(cachedData)
+  //     .setMimeType(ContentService.MimeType.JSON);
+  // }
   
   const sheet = getDirectionsSheet();
   const data = sheet.getDataRange().getValues();
@@ -207,16 +207,57 @@ function getCoursesFromFile(fileId) {
   };
 
   const courses = {};
+  const courseInfo = {};
   Object.entries(groups).forEach(([course, groupName]) => {
     if (groupName) {
-      const match = groupName.match(/(\d+)\s*\((\d+)\s*курс\)\s*с\s*(\d{2}\.\d{2}\.\d{4})/);
+      let match = null;
+      let startDate = null;
+      
+      const dateMatch = groupName.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
+      if (dateMatch) {
+        startDate = dateMatch[1];
+      }
+      
+      const formats = [
+        /(\d+)\s*\((\d+)\s*курс\)\s*с\s*(\d{2}\.\d{2}\.\d{4})/,
+        /(\d+)\s*\((\d+)\s*курс\)/,
+        /^(\d{4,5})/
+      ];
+      
+      for (const format of formats) {
+        const result = groupName.match(format);
+        if (result) {
+          match = result;
+          break;
+        }
+      }
+      
       if (match) {
-        courses[course] = {
-          name: groupName,
-          number: match[1],
-          course: match[2],
-          startDate: match[3]
-        };
+        const groupNumber = match[1];
+        let courseNumber = match[2];
+        
+        if (!courseNumber && groupNumber) {
+          if (groupNumber.startsWith('9') && (groupNumber[1] === '3' || groupNumber[1] === '4')) {
+            courseNumber = groupNumber[1] === '3' ? '2' : '1';
+          }
+        }
+        
+        if (groupNumber) {
+          courses[course] = {
+            name: groupName.trim(),
+            number: groupNumber,
+            course: courseNumber || '1',
+            startDate: startDate || (match[3] || null)
+          };
+          
+          if (groupNumber.startsWith('9') && (groupNumber[1] === '3' || groupNumber[1] === '4')) {
+            courseInfo[course] = {
+              number: groupNumber,
+              course: parseInt(courseNumber || '1'),
+              startDate: startDate || (match[3] || null)
+            };
+          }
+        }
       }
     }
   });
@@ -327,6 +368,22 @@ function getDirectionSchedule(fileId) {
           course: parseInt(match[2]),
           startDate: match[3]
         };
+      } else {
+        const simpleMatch = groupName.match(/^(\d{4,5})/);
+        if (simpleMatch) {
+          const groupNumber = simpleMatch[1];
+          let courseNumber = '1';
+          
+          if (groupNumber.startsWith('9') && (groupNumber[1] === '3' || groupNumber[1] === '4')) {
+            courseNumber = groupNumber[1] === '3' ? '2' : '1';
+          }
+          
+          courseInfo[course] = {
+            number: groupNumber,
+            course: parseInt(courseNumber),
+            startDate: null
+          };
+        }
       }
     }
   });
@@ -342,16 +399,50 @@ function getDirectionSchedule(fileId) {
 
   function isMergedCell(row, col) {
     for (let m of merges) {
-      if (col === m.s.c && row > m.s.r && row <= m.e.r) {
+      if ((col === m.s.c && row > m.s.r && row <= m.e.r) ||
+          (row === m.s.r && col >= m.s.c && col <= m.e.c)) {
         return true;
       }
     }
     return false;
   }
 
+  function getMergedCellValue(row, col) {
+    for (let m of merges) {
+      if (row >= m.s.r && row <= m.e.r && col >= m.s.c && col <= m.e.c) {
+        const startCol = m.s.c;
+        const colLetter = XLSX.utils.encode_col(startCol);
+        const cellRef = colLetter + (m.s.r + 1);
+        return worksheet[cellRef] ? worksheet[cellRef].v : null;
+      }
+    }
+    return null;
+  }
+
   function parseTime(timeStr) {
     if (!timeStr) {
-      return null;
+      const match = timeStr && timeStr.match(/(\d+)\./);
+      const number = match ? parseInt(match[1]) : 1;
+      
+      const timeSlots = {
+        1: { start: "08:30", end: "10:05" },
+        2: { start: "10:15", end: "11:50" },
+        3: { start: "12:15", end: "13:50" },
+        4: { start: "14:00", end: "15:35" },
+        5: { start: "15:45", end: "17:20" },
+        6: { start: "17:30", end: "19:05" }
+      };
+      
+      const slot = timeSlots[number] || timeSlots[1];
+      
+      return {
+        number: number,
+        startAt: slot.start,
+        endAt: slot.end,
+        timeRange: `${slot.start}-${slot.end}`,
+        originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+        additionalSlots: []
+      };
     }
     
     const timeSlots = timeStr.split(',').map(slot => slot.trim());
@@ -368,7 +459,31 @@ function getDirectionSchedule(fileId) {
       };
     }).filter(slot => slot !== null);
 
-    if (parsedSlots.length === 0) return null;
+    if (parsedSlots.length === 0) {
+      const numberMatch = timeStr.match(/(\d+)\./);
+      if (numberMatch) {
+        const number = parseInt(numberMatch[1]);
+        const timeSlots = {
+          1: { start: "08:30", end: "10:05" },
+          2: { start: "10:15", end: "11:50" },
+          3: { start: "12:15", end: "13:50" },
+          4: { start: "14:00", end: "15:35" },
+          5: { start: "15:45", end: "17:20" },
+          6: { start: "17:30", end: "19:05" }
+        };
+        const slot = timeSlots[number] || timeSlots[1];
+        
+        return {
+          number: number,
+          startAt: slot.start,
+          endAt: slot.end,
+          timeRange: `${slot.start}-${slot.end}`,
+          originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+          additionalSlots: []
+        };
+      }
+      return null;
+    }
     
     return {
       ...parsedSlots[0],
@@ -400,7 +515,7 @@ function getDirectionSchedule(fileId) {
     const isStream = subjectStr.toLowerCase().includes('поток');
     const isDivision = subjectStr.toLowerCase().includes('подгруппа');
     
-    const result = {
+    return {
       lessonName: name,
       type: type,
       teacherName: teacher,
@@ -415,17 +530,6 @@ function getDirectionSchedule(fileId) {
       isShort: false,
       isLecture: type === 'lecture'
     };
-
-    if (!result.number && !result.startAt) {
-      result.number = 1;
-      result.startAt = "08:30";
-      result.endAt = "10:05";
-      result.timeRange = "08:30-10:05";
-      result.originalTimeTitle = "1. 08.30-10.05";
-      result.additionalSlots = [];
-    }
-    
-    return result;
   }
 
   let currentDay = null;
@@ -487,21 +591,29 @@ function getDirectionSchedule(fileId) {
       };
 
       Object.entries(subjects).forEach(([course, subject]) => {
-        if (subject) {
+        const courseCol = courseColIdx[course];
+        let mergedValue = null;
+
+        if (!subject) {
+          mergedValue = getMergedCellValue(excelRowIdx, courseCol);
+        }
+
+        if (subject || mergedValue) {
+          const actualSubject = subject || mergedValue;
           const last = currentDaySchedule[course][currentDaySchedule[course].length - 1];
           const isFirstLesson = currentDaySchedule[course].length === 0;
           
-          if (last && last.subject === subject) {
-            last.time += ", " + time;
+          if (last && last.subject === actualSubject) {
+            last.time += ", " + (time || "");
           } else {
             currentDaySchedule[course].push({ 
-              time: isFirstLesson ? "" : time, 
-              subject,
-              isFirstLesson 
+              time: time || "", 
+              subject: actualSubject,
+              isFirstLesson
             });
           }
-        } else if (currentDaySchedule[course].length > 0 && isMergedCell(excelRowIdx, courseColIdx[course])) {
-          currentDaySchedule[course][currentDaySchedule[course].length - 1].time += ", " + time;
+        } else if (currentDaySchedule[course].length > 0 && isMergedCell(excelRowIdx, courseCol)) {
+          currentDaySchedule[course][currentDaySchedule[course].length - 1].time += ", " + (time || "");
         }
       });
     }
