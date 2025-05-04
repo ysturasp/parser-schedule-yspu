@@ -206,60 +206,64 @@ function getCoursesFromFile(fileId) {
     fourth: rawData[3]["__EMPTY_4"]
   };
 
-  const courses = {};
+  const directionHeaders = {
+    first: rawData[2]["__EMPTY_1"] || "",
+    second: rawData[2]["__EMPTY_2"] || "",
+    third: rawData[2]["__EMPTY_3"] || "",
+    fourth: rawData[2]["__EMPTY_4"] || ""
+  };
+
   const courseInfo = {};
   Object.entries(groups).forEach(([course, groupName]) => {
     if (groupName) {
-      let match = null;
       let startDate = null;
-      
-      const dateMatch = groupName.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
-      if (dateMatch) {
-        startDate = dateMatch[1];
-      }
-      
-      const formats = [
-        /(\d+)\s*\((\d+)\s*курс\)\s*с\s*(\d{2}\.\d{2}\.\d{4})/,
-        /(\d+)\s*\((\d+)\s*курс\)/,
-        /^(\d{4,5})/
-      ];
-      
-      for (const format of formats) {
-        const result = groupName.match(format);
-        if (result) {
-          match = result;
-          break;
-        }
-      }
-      
-      if (match) {
-        const groupNumber = match[1];
-        let courseNumber = match[2];
-        
-        if (!courseNumber && groupNumber) {
-          if (groupNumber.startsWith('9') && (groupNumber[1] === '3' || groupNumber[1] === '4')) {
-            courseNumber = groupNumber[1] === '3' ? '2' : '1';
+      let groupNumber = null;
+      let courseNumber = null;
+
+      const fullMatch = groupName.match(/(\d+)\s*\((\d+)\s*курс\)\s*с\s*(\d{2}\.\d{2}\.\d{4})/);
+      if (fullMatch) {
+        groupNumber = fullMatch[1];
+        courseNumber = parseInt(fullMatch[2]);
+        startDate = fullMatch[3];
+      } else {
+        const simpleMatch = groupName.match(/(\d+)\s*\((\d+)\s*курс\)/);
+        if (simpleMatch) {
+          groupNumber = simpleMatch[1];
+          courseNumber = parseInt(simpleMatch[2]);
+        } else {
+          const numberMatch = groupName.match(/^(\d{4,5})/);
+          if (numberMatch) {
+            groupNumber = numberMatch[1];
+            courseNumber = 1;
           }
         }
-        
-        if (groupNumber) {
-          courses[course] = {
-            name: groupName.trim(),
-            number: groupNumber,
-            course: courseNumber || '1',
-            startDate: startDate || (match[3] || null)
-          };
-          
-          if (groupNumber.startsWith('9') && (groupNumber[1] === '3' || groupNumber[1] === '4')) {
-            courseInfo[course] = {
-              number: groupNumber,
-              course: parseInt(courseNumber || '1'),
-              startDate: startDate || (match[3] || null)
-            };
-          }
+      }
+
+      if (!startDate && groupNumber && groupNumber.match(/^9[34]/)) {
+        const headerDateMatch = directionHeaders[course].match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
+        if (headerDateMatch) {
+          startDate = headerDateMatch[1];
         }
+      }
+
+      if (groupNumber) {
+        courseInfo[course] = {
+          number: groupNumber,
+          course: courseNumber,
+          startDate: startDate
+        };
       }
     }
+  });
+
+  const courses = {};
+  Object.entries(courseInfo).forEach(([course, info]) => {
+    courses[course] = {
+      name: info.number + " (" + info.course + " курс)",
+      number: info.number,
+      course: info.course,
+      startDate: info.startDate
+    };
   });
 
   return courses;
@@ -358,32 +362,52 @@ function getDirectionSchedule(fileId) {
     fourth: rawData[3]["__EMPTY_4"]
   };
 
+  const directionHeaders = {
+    first: rawData[2]["__EMPTY_1"] || "",
+    second: rawData[2]["__EMPTY_2"] || "",
+    third: rawData[2]["__EMPTY_3"] || "",
+    fourth: rawData[2]["__EMPTY_4"] || ""
+  };
+
   const courseInfo = {};
   Object.entries(groups).forEach(([course, groupName]) => {
     if (groupName) {
-      const match = groupName.match(/(\d+)\s*\((\d+)\s*курс\)\s*с\s*(\d{2}\.\d{2}\.\d{4})/);
-      if (match) {
-        courseInfo[course] = {
-          number: match[1],
-          course: parseInt(match[2]),
-          startDate: match[3]
-        };
+      let startDate = null;
+      let groupNumber = null;
+      let courseNumber = null;
+
+      const fullMatch = groupName.match(/(\d+)\s*\((\d+)\s*курс\)\s*с\s*(\d{2}\.\d{2}\.\d{4})/);
+      if (fullMatch) {
+        groupNumber = fullMatch[1];
+        courseNumber = parseInt(fullMatch[2]);
+        startDate = fullMatch[3];
       } else {
-        const simpleMatch = groupName.match(/^(\d{4,5})/);
+        const simpleMatch = groupName.match(/(\d+)\s*\((\d+)\s*курс\)/);
         if (simpleMatch) {
-          const groupNumber = simpleMatch[1];
-          let courseNumber = '1';
-          
-          if (groupNumber.startsWith('9') && (groupNumber[1] === '3' || groupNumber[1] === '4')) {
-            courseNumber = groupNumber[1] === '3' ? '2' : '1';
+          groupNumber = simpleMatch[1];
+          courseNumber = parseInt(simpleMatch[2]);
+        } else {
+          const numberMatch = groupName.match(/^(\d{4,5})/);
+          if (numberMatch) {
+            groupNumber = numberMatch[1];
+            courseNumber = 1;
           }
-          
-          courseInfo[course] = {
-            number: groupNumber,
-            course: parseInt(courseNumber),
-            startDate: null
-          };
         }
+      }
+
+      if (!startDate && groupNumber && groupNumber.match(/^9[34]/)) {
+        const headerDateMatch = directionHeaders[course].match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
+        if (headerDateMatch) {
+          startDate = headerDateMatch[1];
+        }
+      }
+
+      if (groupNumber) {
+        courseInfo[course] = {
+          number: groupNumber,
+          course: courseNumber,
+          startDate: startDate
+        };
       }
     }
   });
