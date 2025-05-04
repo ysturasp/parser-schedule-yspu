@@ -317,7 +317,6 @@ function getDirectionSchedule(fileId) {
     fourth: rawData[3]["__EMPTY_4"]
   };
 
-  // Парсинг информации о курсах
   const courseInfo = {};
   Object.entries(groups).forEach(([course, groupName]) => {
     if (groupName) {
@@ -351,7 +350,9 @@ function getDirectionSchedule(fileId) {
   }
 
   function parseTime(timeStr) {
-    if (!timeStr) return null;
+    if (!timeStr) {
+      return null;
+    }
     
     const timeSlots = timeStr.split(',').map(slot => slot.trim());
     const parsedSlots = timeSlots.map(slot => {
@@ -399,7 +400,7 @@ function getDirectionSchedule(fileId) {
     const isStream = subjectStr.toLowerCase().includes('поток');
     const isDivision = subjectStr.toLowerCase().includes('подгруппа');
     
-    return {
+    const result = {
       lessonName: name,
       type: type,
       teacherName: teacher,
@@ -414,6 +415,17 @@ function getDirectionSchedule(fileId) {
       isShort: false,
       isLecture: type === 'lecture'
     };
+
+    if (!result.number && !result.startAt) {
+      result.number = 1;
+      result.startAt = "08:30";
+      result.endAt = "10:05";
+      result.timeRange = "08:30-10:05";
+      result.originalTimeTitle = "1. 08.30-10.05";
+      result.additionalSlots = [];
+    }
+    
+    return result;
   }
 
   let currentDay = null;
@@ -426,7 +438,7 @@ function getDirectionSchedule(fileId) {
 
   for (let i = 4; i < rawData.length; i++) {
     const row = rawData[i];
-    const dayName = row["Министерство просвещеия Российской Федерации \nФедеральное государственное бюджетное учреждение высшего образования\n«Ярославский государственный педагогический университет им. К.Д. Ушинского»\n"];
+    const dayName = row["Министерство просвещения Российской Федерации \nФедеральное государственное бюджетное учреждение высшего образования\n«Ярославский государственный педагогический университет им. К.Д. Ушинского»\n"];
     const excelRowIdx = i + 1;
     
     if (dayName && ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"].includes(dayName)) {
@@ -477,10 +489,16 @@ function getDirectionSchedule(fileId) {
       Object.entries(subjects).forEach(([course, subject]) => {
         if (subject) {
           const last = currentDaySchedule[course][currentDaySchedule[course].length - 1];
+          const isFirstLesson = currentDaySchedule[course].length === 0;
+          
           if (last && last.subject === subject) {
             last.time += ", " + time;
           } else {
-            currentDaySchedule[course].push({ time, subject });
+            currentDaySchedule[course].push({ 
+              time: isFirstLesson ? "" : time, 
+              subject,
+              isFirstLesson 
+            });
           }
         } else if (currentDaySchedule[course].length > 0 && isMergedCell(excelRowIdx, courseColIdx[course])) {
           currentDaySchedule[course][currentDaySchedule[course].length - 1].time += ", " + time;
