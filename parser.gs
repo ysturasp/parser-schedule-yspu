@@ -81,10 +81,10 @@ function getDirections() {
   const cache = CacheService.getScriptCache();
   const cachedData = cache.get('directions_data');
   
-  // if (cachedData) {
-  //   return ContentService.createTextOutput(cachedData)
-  //     .setMimeType(ContentService.MimeType.JSON);
-  // }
+  if (cachedData) {
+    return ContentService.createTextOutput(cachedData)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   const sheet = getDirectionsSheet();
   const data = sheet.getDataRange().getValues();
@@ -93,7 +93,7 @@ function getDirections() {
     const initialData = createInitialDirectionsData();
     saveDirectionsToSheet(initialData);
     const jsonData = JSON.stringify(initialData, null, 2);
-    cache.put('directions_data', jsonData, 21600);   return ContentService.createTextOutput(jsonData)
+    cache.put('directions_data', jsonData, 300);   return ContentService.createTextOutput(jsonData)
       .setMimeType(ContentService.MimeType.JSON);
   }
   
@@ -107,7 +107,7 @@ function getDirections() {
   }
   
   const jsonData = JSON.stringify(directions, null, 2);
-  cache.put('directions_data', jsonData, 21600); 
+  cache.put('directions_data', jsonData, 300); 
   scheduleUpdate();
   
   return ContentService.createTextOutput(jsonData)
@@ -158,7 +158,7 @@ function updateDirectionsData() {
   saveDirectionsToSheet(directions);
   
   const jsonData = JSON.stringify(directions, null, 2);
-  CacheService.getScriptCache().put('directions_data', jsonData, 21600);
+  CacheService.getScriptCache().put('directions_data', jsonData, 300);
 }
 
 /**
@@ -522,25 +522,46 @@ function getDirectionSchedule(fileId) {
     const parts = subjectStr.split(',');
     const name = parts[0].trim();
     
-    const type = subjectStr.toLowerCase().includes('лек') ? 'lecture' : 
-                subjectStr.toLowerCase().includes('практ') ? 'practice' : 'other';
+    const isPhysicalEducation = name.toLowerCase().includes('физ') || 
+                               name.toLowerCase().includes('фк') || 
+                               name.toLowerCase().includes('физическ') ||
+                               name.toLowerCase().includes('элективные дисциплины по фк');
+    
+    let type = 'other';
+    if (isPhysicalEducation) {
+      type = 'practice';
+    } else {
+      type = subjectStr.toLowerCase().includes('лек') ? 'lecture' : 
+             subjectStr.toLowerCase().includes('практ') ? 'practice' : 'other';
+    }
     
     const teacherMatch = subjectStr.match(/(?:доц\.|проф\.|ст\.преп\.|асс\.)\s*([^,]+)/);
     const teacher = teacherMatch ? teacherMatch[1].trim() : null;
     
-    const roomMatch = subjectStr.match(/(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)/);
+    let subjectWithoutDates = subjectStr.replace(/(?:с|по)\s*\d{2}\.\d{2}\.\d{4}/g, '');
+    
+    const roomMatch = subjectWithoutDates.match(/,\s*(?:ауд\.)?\s*(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)\s*(?:\(|$|,|\s+|ЕГФ)/);
     const room = roomMatch ? roomMatch[1] : null;
     
-    const dateMatch = subjectStr.match(/с\s*(\d{2}\.\d{2}\.\d{4})(?:\s*по\s*(\d{2}\.\d{2}\.\d{4}))?/);
-    const startDate = dateMatch ? dateMatch[1] : null;
-    const endDate = dateMatch ? dateMatch[2] : null;
+    const startDateMatch = subjectStr.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
+    const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
+    const startDate = startDateMatch ? startDateMatch[1] : null;
+    const endDate = endDateMatch ? endDateMatch[1] : null;
     
     const isDistant = subjectStr.toLowerCase().includes('дистант');
     const isStream = subjectStr.toLowerCase().includes('поток');
     const isDivision = subjectStr.toLowerCase().includes('подгруппа');
     
+    let cleanName = name;
+    if (startDate) {
+        cleanName = cleanName.replace(/с\s*\d{2}\.\d{2}\.\d{4}/, '').trim();
+    }
+    if (endDate) {
+        cleanName = cleanName.replace(/по\s*\d{2}\.\d{2}\.\d{4}/, '').trim();
+    }
+    
     return {
-      lessonName: name,
+      lessonName: cleanName,
       type: type,
       teacherName: teacher,
       auditoryName: room,
@@ -552,7 +573,8 @@ function getDirectionSchedule(fileId) {
       duration: 2,
       durationMinutes: 90,
       isShort: false,
-      isLecture: type === 'lecture'
+      isLecture: type === 'lecture',
+      originalText: subjectStr.trim()
     };
   }
 
