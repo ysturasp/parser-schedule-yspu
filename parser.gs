@@ -519,8 +519,18 @@ function getDirectionSchedule(fileId) {
   function parseSubject(subjectStr) {
     if (!subjectStr) return null;
     
+    const lowerSubject = subjectStr.toLowerCase();
     const parts = subjectStr.split(',');
     const name = parts[0].trim();
+    
+    const isDistant = lowerSubject.includes('дистант') || 
+                     lowerSubject.includes('онлайн') ||
+                     lowerSubject.includes('он-лайн') ||
+                     parts.some(part => part.trim().toLowerCase() === 'онлайн') ||
+                     parts.some(part => part.trim().toLowerCase() === 'он-лайн');
+    
+    const isStream = lowerSubject.includes('поток');
+    const isDivision = lowerSubject.includes('подгруппа');
     
     const isPhysicalEducation = name.toLowerCase().includes('физ') || 
                                name.toLowerCase().includes('фк') || 
@@ -534,9 +544,34 @@ function getDirectionSchedule(fileId) {
       type = subjectStr.toLowerCase().includes('лек') ? 'lecture' : 
              subjectStr.toLowerCase().includes('практ') ? 'practice' : 'other';
     }
-    
-    const teacherMatch = subjectStr.match(/(?:доц\.|проф\.|ст\.преп\.|асс\.)\s*([^,]+)/);
-    const teacher = teacherMatch ? teacherMatch[1].trim() : null;
+
+    let teacher = null;
+    const teacherRegexPatterns = [
+      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ][а-яё]+)\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\./,
+      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
+      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
+      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s+([А-ЯЁ])\s+([А-ЯЁ][а-яё]+)/
+    ];
+
+    for (const pattern of teacherRegexPatterns) {
+      const match = subjectStr.match(pattern);
+      if (match) {
+        if (match[1].length > 1) {
+          teacher = `${match[1]} ${match[2]}.${match[3]}.`;
+        } else {
+          teacher = `${match[3]} ${match[1]}.${match[2]}.`;
+        }
+        break;
+      }
+    }
+
+    if (teacher) {
+      teacher = teacher.replace(/\s*\([^)]*\)/g, '')
+                      .replace(/\s+с\s+\d{2}:\d{2}/g, '')
+                      .replace(/\s+до\s+\d{2}\.\d{2}\.\d{4}/g, '')
+                      .replace(/\s+кроме\s+\d{2}\.\d{2}\.\d{4}/g, '')
+                      .trim();
+    }
     
     let subjectWithoutDates = subjectStr.replace(/(?:с|по)\s*\d{2}\.\d{2}\.\d{4}/g, '');
     
@@ -547,10 +582,6 @@ function getDirectionSchedule(fileId) {
     const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
     const startDate = startDateMatch ? startDateMatch[1] : null;
     const endDate = endDateMatch ? endDateMatch[1] : null;
-    
-    const isDistant = subjectStr.toLowerCase().includes('дистант');
-    const isStream = subjectStr.toLowerCase().includes('поток');
-    const isDivision = subjectStr.toLowerCase().includes('подгруппа');
     
     let cleanName = name;
     if (startDate) {
@@ -697,6 +728,526 @@ function getDirectionSchedule(fileId) {
 }
 
 /**
+ * Получает или создает лист с преподавателями в активной таблице
+ */
+function getTeachersSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Преподаватели');
+  
+  if (!sheet) {
+    sheet = ss.insertSheet('Преподаватели');
+    sheet.appendRow(['ID', 'ФИО', 'Последнее обновление', 'Расписание']);
+  }
+  
+  return sheet;
+}
+
+/**
+ * Получает или создает лист с аудиториями в активной таблице
+ */
+function getAuditoriesSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Аудитории');
+  
+  if (!sheet) {
+    sheet = ss.insertSheet('Аудитории');
+    sheet.appendRow(['ID', 'Номер', 'Последнее обновление', 'Расписание']);
+  }
+  
+  return sheet;
+}
+
+/**
+ * Обновляет данные о преподавателях и аудиториях
+ */
+function updateTeachersAndAuditories() {
+  const folderId = "1Uz9POR8Ni66-fc3Au0YrfeYOTNXYJWID";
+  const files = getFilesFromFolder(folderId);
+  
+  const teachersMap = new Map();
+  const auditoriesMap = new Map();
+  
+  files.forEach(file => {
+    try {
+      const schedule = JSON.parse(getDirectionSchedule(file.id).getContent());
+      const directionName = file.name.replace('.xlsx', '');
+      
+      schedule.items.forEach(item => {
+        item.days.forEach(day => {
+          day.lessons.forEach(lesson => {
+            if (lesson.teacherName) {
+              const teacherId = lesson.teacherName.toLowerCase().replace(/\s+/g, '_');
+              if (!teachersMap.has(teacherId)) {
+                teachersMap.set(teacherId, {
+                  id: teacherId,
+                  name: lesson.teacherName,
+                  schedule: []
+                });
+              }
+              
+              teachersMap.get(teacherId).schedule.push({
+                direction: directionName,
+                group: item.courseInfo.number,
+                day: day.info.type,
+                time: lesson.timeRange,
+                subject: lesson.lessonName,
+                auditory: lesson.auditoryName,
+                type: lesson.type,
+                isDistant: lesson.isDistant || lesson.type === 'distant'
+              });
+            }
+            
+            if (lesson.auditoryName) {
+              const auditoryId = String(lesson.auditoryName);
+              if (!auditoriesMap.has(auditoryId)) {
+                auditoriesMap.set(auditoryId, {
+                  id: auditoryId,
+                  number: lesson.auditoryName,
+                  schedule: []
+                });
+              }
+              
+              auditoriesMap.get(auditoryId).schedule.push({
+                direction: directionName,
+                group: item.courseInfo.number,
+                day: day.info.type,
+                time: lesson.timeRange,
+                subject: lesson.lessonName,
+                teacher: lesson.teacherName,
+                type: lesson.type
+              });
+            }
+          });
+        });
+      });
+    } catch (e) {
+      console.error(`Ошибка при обработке файла ${file.id}: ${e.message}`);
+    }
+  });
+  
+  teachersMap.forEach(teacher => {
+    const streamKey = (item) => `${item.day}_${item.time}_${item.subject}_${item.auditory}_${item.type}`;
+    const grouped = new Map();
+    
+    teacher.schedule.forEach(item => {
+      const key = streamKey(item);
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          ...item,
+          directions: new Set([item.direction]),
+          groups: new Set([item.group])
+        });
+      } else {
+        const existing = grouped.get(key);
+        existing.directions.add(item.direction);
+        existing.groups.add(item.group);
+      }
+    });
+    
+    teacher.schedule = Array.from(grouped.values()).map(item => {
+      const { directions, groups, ...rest } = item;
+      return {
+        ...rest,
+        direction: Array.from(directions).sort().join(', '),
+        group: Array.from(groups).sort().join(' ')
+      };
+    });
+  });
+  
+  auditoriesMap.forEach(auditory => {
+    const streamKey = (item) => `${item.day}_${item.time}_${item.subject}_${item.teacher}_${item.type}`;
+    const grouped = new Map();
+    
+    auditory.schedule.forEach(item => {
+      const key = streamKey(item);
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          day: item.day,
+          time: item.time,
+          subject: item.subject,
+          teacher: item.teacher,
+          type: item.type,
+          directions: new Set([item.direction]),
+          groups: new Set([item.group])
+        });
+      } else {
+        const existing = grouped.get(key);
+        if (!existing.directions.has(item.direction)) {
+          existing.directions.add(item.direction);
+        }
+        if (!existing.groups.has(item.group)) {
+          existing.groups.add(item.group);
+        }
+      }
+    });
+    
+    auditory.schedule = Array.from(grouped.values()).map(item => {
+      const { directions, groups, ...rest } = item;
+      return {
+        ...rest,
+        direction: Array.from(directions).sort().join(', '),
+        group: Array.from(groups).sort().join(' ')
+      };
+    });
+  });
+  
+  const teachersSheet = getTeachersSheet();
+  const teachersData = teachersSheet.getDataRange().getValues();
+  const now = new Date().toISOString();
+  
+  if (teachersData.length > 1) {
+    teachersSheet.getRange(2, 1, teachersData.length - 1, teachersData[0].length).clear();
+  }
+  
+  teachersMap.forEach(teacher => {
+    const scheduleJson = JSON.stringify(teacher.schedule);
+    teachersSheet.appendRow([teacher.id, teacher.name, now, scheduleJson]);
+  });
+  
+  const auditoriesSheet = getAuditoriesSheet();
+  const auditoriesData = auditoriesSheet.getDataRange().getValues();
+  
+  if (auditoriesData.length > 1) {
+    auditoriesSheet.getRange(2, 1, auditoriesData.length - 1, auditoriesData[0].length).clear();
+  }
+  
+  auditoriesMap.forEach(auditory => {
+    const scheduleJson = JSON.stringify(auditory.schedule);
+    auditoriesSheet.appendRow([auditory.id, auditory.number, now, scheduleJson]);
+  });
+  
+  const cache = CacheService.getScriptCache();
+  cache.put('teachers_data', JSON.stringify(Array.from(teachersMap.values())), 300);
+  cache.put('auditories_data', JSON.stringify(Array.from(auditoriesMap.values())), 300);
+}
+
+/**
+ * Получает расписание преподавателя
+ */
+function getTeacherSchedule(teacherId) {
+  const cache = CacheService.getScriptCache();
+  const cachedData = cache.get('teachers_data');
+  
+  // if (cachedData) {
+  //   const teachers = JSON.parse(cachedData);
+  //   const teacher = teachers.find(t => t.id === teacherId);
+  //   if (teacher) {
+  //     return ContentService.createTextOutput(JSON.stringify(teacher))
+  //       .setMimeType(ContentService.MimeType.JSON);
+  //   }
+  // }
+  
+  const sheet = getTeachersSheet();
+  const data = sheet.getDataRange().getValues();
+  const teacherRow = data.find((r, i) => i > 0 && r[0] === teacherId);
+  
+  if (!teacherRow) {
+    throw new Error('Преподаватель не найден');
+  }
+  
+  const schedule = {
+    isCache: false,
+    items: [{
+      number: 0,
+      courseInfo: {
+        number: teacherRow[0],
+        name: teacherRow[1],
+        course: 0,
+        startDate: null
+      },
+      days: []
+    }]
+  };
+
+  const lessons = JSON.parse(teacherRow[3] || '[]');
+  
+  const daysMap = new Map();
+  
+  lessons.forEach(lesson => {
+    const dayKey = lesson.day;
+    if (!daysMap.has(dayKey)) {
+      daysMap.set(dayKey, {
+        info: {
+          type: lesson.day,
+          weekNumber: 1,
+          date: new Date().toISOString()
+        },
+        lessons: []
+      });
+    }
+    
+    const timeMatch = lesson.time.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
+    if (timeMatch) {
+      const [_, startHour, startMin, endHour, endMin] = timeMatch;
+      const timeNumber = parseInt(lesson.time.split('.')[0]);
+      
+      daysMap.get(dayKey).lessons.push({
+        number: timeNumber,
+        startAt: `${startHour}:${startMin}`,
+        endAt: `${endHour}:${endMin}`,
+        timeRange: lesson.time,
+        originalTimeTitle: `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
+        additionalSlots: [],
+        lessonName: lesson.subject,
+        type: lesson.type,
+        teacherName: teacherRow[1],
+        auditoryName: lesson.auditory,
+        isDistant: lesson.isDistant || lesson.type === 'distant',
+        isStream: lesson.type === 'stream',
+        isDivision: lesson.type === 'division',
+        startDate: null,
+        endDate: null,
+        duration: 2,
+        durationMinutes: 90,
+        isShort: false,
+        isLecture: lesson.type === 'lecture',
+        originalText: `${lesson.subject}, ${lesson.type}, ${teacherRow[1]}, ${lesson.auditory || 'онлайн'}`,
+        groups: lesson.group,
+        direction: lesson.direction
+      });
+    }
+  });
+  
+  schedule.items[0].days = Array.from(daysMap.values());
+  
+  return ContentService.createTextOutput(JSON.stringify(schedule))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Получает расписание аудитории
+ */
+function getAuditorySchedule(auditoryId) {
+  const cache = CacheService.getScriptCache();
+  const cachedData = cache.get('auditories_data');
+  
+  // if (cachedData) {
+  //   const auditories = JSON.parse(cachedData);
+  //   const auditory = auditors.find(a => a.id === auditoryId);
+  //   if (auditory) {
+  //     return ContentService.createTextOutput(JSON.stringify(auditory))
+  //       .setMimeType(ContentService.MimeType.JSON);
+  //   }
+  // }
+  
+  const sheet = getAuditoriesSheet();
+  const data = sheet.getDataRange().getValues();
+  const auditoryRow = data.find((r, i) => i > 0 && String(r[0]) === String(auditoryId));
+  
+  if (!auditoryRow) {
+    throw new Error('Аудитория не найдена');
+  }
+  
+  const schedule = {
+    isCache: false,
+    items: [{
+      number: 0,
+      courseInfo: {
+        number: auditoryRow[0],
+        course: 0,
+        startDate: null
+      },
+      days: []
+    }]
+  };
+
+  const lessons = JSON.parse(auditoryRow[3] || '[]');
+  
+  const daysMap = new Map();
+  
+  lessons.forEach(lesson => {
+    const dayKey = lesson.day;
+    if (!daysMap.has(dayKey)) {
+      daysMap.set(dayKey, {
+        info: {
+          type: lesson.day,
+          weekNumber: 1,
+          date: new Date().toISOString()
+        },
+        lessons: []
+      });
+    }
+    
+    const timeMatch = lesson.time.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
+    if (timeMatch) {
+      const [_, startHour, startMin, endHour, endMin] = timeMatch;
+      const timeNumber = parseInt(lesson.time.split('.')[0]);
+      
+      daysMap.get(dayKey).lessons.push({
+        number: timeNumber,
+        startAt: `${startHour}:${startMin}`,
+        endAt: `${endHour}:${endMin}`,
+        timeRange: lesson.time,
+        originalTimeTitle: `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
+        additionalSlots: [],
+        lessonName: lesson.subject,
+        type: lesson.type,
+        teacherName: lesson.teacher,
+        auditoryName: auditoryRow[1],
+        isDistant: lesson.isDistant || lesson.type === 'distant',
+        isStream: lesson.type === 'stream',
+        isDivision: lesson.type === 'division',
+        startDate: null,
+        endDate: null,
+        duration: 2,
+        durationMinutes: 90,
+        isShort: false,
+        isLecture: lesson.type === 'lecture',
+        originalText: `${lesson.subject}, ${lesson.type}, ${lesson.teacher}, ${auditoryRow[1]}`,
+        groups: lesson.group,
+        direction: lesson.direction
+      });
+    }
+  });
+  
+  schedule.items[0].days = Array.from(daysMap.values());
+  
+  return ContentService.createTextOutput(JSON.stringify(schedule))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Получает список всех преподавателей
+ */
+function getTeachers() {
+  const cache = CacheService.getScriptCache();
+  const cachedData = cache.get('teachers_list');
+  
+  // if (cachedData) {
+  //   return ContentService.createTextOutput(cachedData)
+  //     .setMimeType(ContentService.MimeType.JSON);
+  // }
+  
+  const sheet = getTeachersSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  const teachers = [];
+  for (let i = 1; i < data.length; i++) {
+    teachers.push({
+      id: data[i][0],
+      name: data[i][1]
+    });
+  }
+  
+  const jsonData = JSON.stringify(teachers);
+  cache.put('teachers_list', jsonData, 300);
+  
+  return ContentService.createTextOutput(jsonData)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Получает список всех аудиторий
+ */
+function getAuditories() {
+  const cache = CacheService.getScriptCache();
+  const cachedData = cache.get('auditories_list');
+  
+  // if (cachedData) {
+  //   return ContentService.createTextOutput(cachedData)
+  //     .setMimeType(ContentService.MimeType.JSON);
+  // }
+  
+  const sheet = getAuditoriesSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  const auditories = [];
+  for (let i = 1; i < data.length; i++) {
+    auditories.push({
+      id: data[i][0],
+      number: data[i][1]
+    });
+  }
+  
+  const jsonData = JSON.stringify(auditories);
+  cache.put('auditories_list', jsonData, 300);
+  
+  return ContentService.createTextOutput(jsonData)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Получает список всех преподавателей с расписанием
+ */
+function getTeachersWithSchedule() {
+  const cache = CacheService.getScriptCache();
+  const cachedData = cache.get('teachers_data');
+  
+  // if (cachedData) {
+  //   return ContentService.createTextOutput(cachedData)
+  //     .setMimeType(ContentService.MimeType.JSON);
+  // }
+  
+  const sheet = getTeachersSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  const teachers = [];
+  for (let i = 1; i < data.length; i++) {
+    teachers.push({
+      id: data[i][0],
+      name: data[i][1],
+      schedule: JSON.parse(data[i][3] || '[]')
+    });
+  }
+  
+  const jsonData = JSON.stringify(teachers);
+  cache.put('teachers_data', jsonData, 300);
+  
+  return ContentService.createTextOutput(jsonData)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Получает список всех аудиторий с расписанием
+ */
+function getAuditoriesWithSchedule() {
+  const cache = CacheService.getScriptCache();
+  const cachedData = cache.get('auditories_data');
+  
+  // if (cachedData) {
+  //   return ContentService.createTextOutput(cachedData)
+  //     .setMimeType(ContentService.MimeType.JSON);
+  // }
+  
+  const sheet = getAuditoriesSheet();
+  const data = sheet.getDataRange().getValues();
+  
+  const auditories = [];
+  for (let i = 1; i < data.length; i++) {
+    auditories.push({
+      id: data[i][0],
+      number: data[i][1],
+      schedule: JSON.parse(data[i][3] || '[]')
+    });
+  }
+  
+  const jsonData = JSON.stringify(auditories);
+  cache.put('auditories_data', jsonData, 300);
+  
+  return ContentService.createTextOutput(jsonData)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * Очищает все кэши
+ */
+function clearAllCaches() {
+  const cache = CacheService.getScriptCache();
+  cache.removeAll([
+    'directions_data',
+    'teachers_data',
+    'teachers_list',
+    'auditories_data',
+    'auditories_list'
+  ]);
+  
+  return ContentService.createTextOutput(JSON.stringify({ 
+    status: "success",
+    message: "Кэши очищены"
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
  * HTTP-обработчик для веб-API
  */
 function doGet(e) {
@@ -705,7 +1256,7 @@ function doGet(e) {
       return getDirections();
     }
     
-    const { action, id } = e.parameter;
+    const { action, id, full } = e.parameter;
     
     switch (action) {
       case 'directions':
@@ -715,12 +1266,29 @@ function doGet(e) {
           throw new Error('Не указан ID направления');
         }
         return getDirectionSchedule(id);
+      case 'teachers':
+        return full === 'true' ? getTeachersWithSchedule() : getTeachers();
+      case 'teacher':
+        if (!id) {
+          throw new Error('Не указан ID преподавателя');
+        }
+        return getTeacherSchedule(id);
+      case 'auditories':
+        return full === 'true' ? getAuditoriesWithSchedule() : getAuditories();
+      case 'auditory':
+        if (!id) {
+          throw new Error('Не указан ID аудитории');
+        }
+        return getAuditorySchedule(id);
       case 'force-update':
-              updateDirectionsData();
+        updateDirectionsData();
+        updateTeachersAndAuditories();
         return ContentService.createTextOutput(JSON.stringify({ 
           status: "success",
           message: "Данные обновлены"
         })).setMimeType(ContentService.MimeType.JSON);
+      case 'clear-cache':
+        return clearAllCaches();
       default:
         throw new Error('Неизвестное действие');
     }
