@@ -736,7 +736,7 @@ function getTeachersSheet() {
   
   if (!sheet) {
     sheet = ss.insertSheet('Преподаватели');
-    sheet.appendRow(['ID', 'ФИО', 'Последнее обновление', 'Расписание']);
+    sheet.appendRow(['ID', 'ФИО', 'Последнее обновление', 'Расписание', 'История изменений']);
   }
   
   return sheet;
@@ -751,10 +751,79 @@ function getAuditoriesSheet() {
   
   if (!sheet) {
     sheet = ss.insertSheet('Аудитории');
-    sheet.appendRow(['ID', 'Номер', 'Последнее обновление', 'Расписание']);
+    sheet.appendRow(['ID', 'Номер', 'Последнее обновление', 'Расписание', 'История изменений']);
   }
   
   return sheet;
+}
+
+/**
+ * Сравнивает два расписания и возвращает список изменений
+ */
+function compareSchedules(oldSchedule, newSchedule) {
+  const changes = new Set();
+  
+  const normalizeString = (str) => str.toLowerCase().replace(/\s+/g, ' ').trim();
+  const createKey = (item) => {
+    const day = item.day;
+    const time = item.time.split('-')[0];
+    const subject = normalizeString(item.subject).replace(/[^а-яёa-z0-9]/g, '');
+    return `${day}_${time}_${subject}`;
+  };
+  
+  const oldMap = new Map(oldSchedule.map(item => [createKey(item), item]));
+  const newMap = new Map(newSchedule.map(item => [createKey(item), item]));
+  
+  for (const [key, newItem] of newMap.entries()) {
+    if (!oldMap.has(key)) {
+      changes.add(`Добавлено: ${newItem.day}, ${newItem.time}, ${newItem.subject}`);
+    } else {
+      const oldItem = oldMap.get(key);
+      const fieldsToCompare = {
+        group: { label: 'группа', normalize: false },
+        time: { label: 'время', normalize: false },
+        subject: { label: 'предмет', normalize: true },
+        teacher: { label: 'преподаватель', normalize: false },
+        type: { label: 'тип', normalize: false },
+        auditoryName: { label: 'аудитория', normalize: false }
+      };
+      
+      const changedFields = [];
+      for (const [field, config] of Object.entries(fieldsToCompare)) {
+        const oldValue = oldItem[field];
+        const newValue = newItem[field];
+        
+        if (oldValue && newValue && oldValue !== newValue) {
+          if (config.normalize) {
+            const normalizedOld = normalizeString(oldValue);
+            const normalizedNew = normalizeString(newValue);
+            
+            if (normalizedOld !== normalizedNew) {
+              if (normalizedOld.replace(/[^а-яёa-z0-9]/g, '') === normalizedNew.replace(/[^а-яёa-z0-9]/g, '')) {
+                changedFields.push(`исправлена опечатка в названии: ${oldValue} → ${newValue}`);
+              } else {
+                changedFields.push(`${config.label}: ${oldValue} → ${newValue}`);
+              }
+            }
+          } else if (oldValue !== newValue) {
+            changedFields.push(`${config.label}: ${oldValue} → ${newValue}`);
+          }
+        }
+      }
+      
+      if (changedFields.length > 0) {
+        changes.add(`Изменено (${changedFields.join(', ')})`);
+      }
+    }
+  }
+  
+  for (const [key, oldItem] of oldMap.entries()) {
+    if (!newMap.has(key)) {
+      changes.add(`Удалено: ${oldItem.day}, ${oldItem.time}, ${oldItem.subject}`);
+    }
+  }
+  
+  return Array.from(changes);
 }
 
 /**
@@ -767,6 +836,28 @@ function updateTeachersAndAuditories() {
   const teachersMap = new Map();
   const auditoriesMap = new Map();
   
+  const teachersSheet = getTeachersSheet();
+  const teachersData = teachersSheet.getDataRange().getValues();
+  const existingTeachers = new Map();
+  for (let i = 1; i < teachersData.length; i++) {
+    existingTeachers.set(teachersData[i][0], {
+      name: teachersData[i][1],
+      schedule: JSON.parse(teachersData[i][3] || '[]'),
+      history: JSON.parse(teachersData[i][4] || '[]')
+    });
+  }
+  
+  const auditoriesSheet = getAuditoriesSheet();
+  const auditoriesData = auditoriesSheet.getDataRange().getValues();
+  const existingAuditories = new Map();
+  for (let i = 1; i < auditoriesData.length; i++) {
+    existingAuditories.set(String(auditoriesData[i][0]), {
+      number: auditoriesData[i][1],
+      schedule: JSON.parse(auditoriesData[i][3] || '[]'),
+      history: JSON.parse(auditoriesData[i][4] || '[]')
+    });
+  }
+  
   files.forEach(file => {
     try {
       const schedule = JSON.parse(getDirectionSchedule(file.id).getContent());
@@ -774,7 +865,28 @@ function updateTeachersAndAuditories() {
       
       schedule.items.forEach(item => {
         item.days.forEach(day => {
+          const groupedLessons = [];
+          let currentGroup = null;
+          
           day.lessons.forEach(lesson => {
+            if (currentGroup && 
+                currentGroup.lessonName === lesson.lessonName && 
+                currentGroup.auditoryName === lesson.auditoryName &&
+                currentGroup.type === lesson.type) {
+              currentGroup.originalTimeTitle += `, ${lesson.originalTimeTitle}`;
+              currentGroup.additionalSlots.push({
+                number: lesson.number,
+                startAt: lesson.startAt,
+                endAt: lesson.endAt,
+                timeRange: lesson.timeRange
+              });
+            } else {
+              currentGroup = {...lesson};
+              groupedLessons.push(currentGroup);
+            }
+          });
+
+          groupedLessons.forEach(lesson => {
             if (lesson.teacherName) {
               const teacherId = lesson.teacherName.toLowerCase().replace(/\s+/g, '_');
               if (!teachersMap.has(teacherId)) {
@@ -790,6 +902,8 @@ function updateTeachersAndAuditories() {
                 group: item.courseInfo.number,
                 day: day.info.type,
                 time: lesson.timeRange,
+                originalTimeTitle: lesson.originalTimeTitle,
+                additionalSlots: lesson.additionalSlots,
                 subject: lesson.lessonName,
                 auditory: lesson.auditoryName,
                 type: lesson.type,
@@ -812,6 +926,8 @@ function updateTeachersAndAuditories() {
                 group: item.courseInfo.number,
                 day: day.info.type,
                 time: lesson.timeRange,
+                originalTimeTitle: lesson.originalTimeTitle,
+                additionalSlots: lesson.additionalSlots,
                 subject: lesson.lessonName,
                 teacher: lesson.teacherName,
                 type: lesson.type
@@ -825,7 +941,11 @@ function updateTeachersAndAuditories() {
     }
   });
   
-  teachersMap.forEach(teacher => {
+  const now = new Date().toISOString();
+  const updatedTeacherRows = [];
+  const updatedAuditoryRows = [];
+  
+  teachersMap.forEach((teacher, id) => {
     const streamKey = (item) => `${item.day}_${item.time}_${item.subject}_${item.auditory}_${item.type}`;
     const grouped = new Map();
     
@@ -852,9 +972,42 @@ function updateTeachersAndAuditories() {
         group: Array.from(groups).sort().join(' ')
       };
     });
+    
+    const existing = existingTeachers.get(id);
+    const scheduleJson = JSON.stringify(teacher.schedule);
+    
+    if (!existing || JSON.stringify(existing.schedule) !== scheduleJson) {
+      const changes = existing ? compareSchedules(existing.schedule, teacher.schedule) : ['Начальное добавление расписания'];
+      let history;
+      try {
+        history = existing?.history ? JSON.parse(JSON.stringify(existing.history)) : [];
+      } catch (e) {
+        history = [];
+        console.error('Ошибка при парсинге истории преподавателя:', e);
+      }
+      
+      if (changes.length > 0) {
+        history.push({
+          date: now,
+          changes: changes
+        });
+        
+        while (history.length > 10) {
+          history.shift();
+        }
+        
+        updatedTeacherRows.push({
+          id: id,
+          name: teacher.name,
+          lastUpdate: now,
+          schedule: scheduleJson,
+          history: JSON.stringify(history)
+        });
+      }
+    }
   });
   
-  auditoriesMap.forEach(auditory => {
+  auditoriesMap.forEach((auditory, id) => {
     const streamKey = (item) => `${item.day}_${item.time}_${item.subject}_${item.teacher}_${item.type}`;
     const grouped = new Map();
     
@@ -862,22 +1015,14 @@ function updateTeachersAndAuditories() {
       const key = streamKey(item);
       if (!grouped.has(key)) {
         grouped.set(key, {
-          day: item.day,
-          time: item.time,
-          subject: item.subject,
-          teacher: item.teacher,
-          type: item.type,
+          ...item,
           directions: new Set([item.direction]),
           groups: new Set([item.group])
         });
       } else {
         const existing = grouped.get(key);
-        if (!existing.directions.has(item.direction)) {
-          existing.directions.add(item.direction);
-        }
-        if (!existing.groups.has(item.group)) {
-          existing.groups.add(item.group);
-        }
+        existing.directions.add(item.direction);
+        existing.groups.add(item.group);
       }
     });
     
@@ -889,32 +1034,86 @@ function updateTeachersAndAuditories() {
         group: Array.from(groups).sort().join(' ')
       };
     });
-  });
-  
-  const teachersSheet = getTeachersSheet();
-  const teachersData = teachersSheet.getDataRange().getValues();
-  const now = new Date().toISOString();
-  
-  if (teachersData.length > 1) {
-    teachersSheet.getRange(2, 1, teachersData.length - 1, teachersData[0].length).clear();
-  }
-  
-  teachersMap.forEach(teacher => {
-    const scheduleJson = JSON.stringify(teacher.schedule);
-    teachersSheet.appendRow([teacher.id, teacher.name, now, scheduleJson]);
-  });
-  
-  const auditoriesSheet = getAuditoriesSheet();
-  const auditoriesData = auditoriesSheet.getDataRange().getValues();
-  
-  if (auditoriesData.length > 1) {
-    auditoriesSheet.getRange(2, 1, auditoriesData.length - 1, auditoriesData[0].length).clear();
-  }
-  
-  auditoriesMap.forEach(auditory => {
+    
+    const existing = existingAuditories.get(id);
     const scheduleJson = JSON.stringify(auditory.schedule);
-    auditoriesSheet.appendRow([auditory.id, auditory.number, now, scheduleJson]);
+    
+    if (!existing || JSON.stringify(existing.schedule) !== scheduleJson) {
+      const changes = existing ? compareSchedules(existing.schedule, auditory.schedule) : ['Начальное добавление расписания'];
+      let history;
+      try {
+        history = existing?.history ? JSON.parse(JSON.stringify(existing.history)) : [];
+      } catch (e) {
+        history = [];
+        console.error('Ошибка при парсинге истории аудитории:', e);
+      }
+      
+      if (changes.length > 0) {
+        history.push({
+          date: now,
+          changes: changes
+        });
+        
+        while (history.length > 10) {
+          history.shift();
+        }
+        
+        updatedAuditoryRows.push({
+          id: id,
+          number: auditory.number,
+          lastUpdate: now,
+          schedule: scheduleJson,
+          history: JSON.stringify(history)
+        });
+      }
+    }
   });
+  
+  if (updatedTeacherRows.length > 0) {
+    updatedTeacherRows.forEach(row => {
+      const existingRow = teachersData.findIndex((r, i) => i > 0 && r[0] === row.id);
+      if (existingRow > 0) {
+        teachersSheet.getRange(existingRow + 1, 1, 1, 5).setValues([[
+          row.id,
+          row.name,
+          row.lastUpdate,
+          row.schedule,
+          row.history
+        ]]);
+      } else {
+        teachersSheet.appendRow([
+          row.id,
+          row.name,
+          row.lastUpdate,
+          row.schedule,
+          row.history
+        ]);
+      }
+    });
+  }
+  
+  if (updatedAuditoryRows.length > 0) {
+    updatedAuditoryRows.forEach(row => {
+      const existingRow = auditoriesData.findIndex((r, i) => i > 0 && String(r[0]) === String(row.id));
+      if (existingRow > 0) {
+        auditoriesSheet.getRange(existingRow + 1, 1, 1, 5).setValues([[
+          row.id,
+          row.number,
+          row.lastUpdate,
+          row.schedule,
+          row.history
+        ]]);
+      } else {
+        auditoriesSheet.appendRow([
+          row.id,
+          row.number,
+          row.lastUpdate,
+          row.schedule,
+          row.history
+        ]);
+      }
+    });
+  }
   
   const cache = CacheService.getScriptCache();
   cache.put('teachers_data', JSON.stringify(Array.from(teachersMap.values())), 300);
@@ -925,18 +1124,6 @@ function updateTeachersAndAuditories() {
  * Получает расписание преподавателя
  */
 function getTeacherSchedule(teacherId) {
-  const cache = CacheService.getScriptCache();
-  const cachedData = cache.get('teachers_data');
-  
-  // if (cachedData) {
-  //   const teachers = JSON.parse(cachedData);
-  //   const teacher = teachers.find(t => t.id === teacherId);
-  //   if (teacher) {
-  //     return ContentService.createTextOutput(JSON.stringify(teacher))
-  //       .setMimeType(ContentService.MimeType.JSON);
-  //   }
-  // }
-  
   const sheet = getTeachersSheet();
   const data = sheet.getDataRange().getValues();
   const teacherRow = data.find((r, i) => i > 0 && r[0] === teacherId);
@@ -956,7 +1143,8 @@ function getTeacherSchedule(teacherId) {
         startDate: null
       },
       days: []
-    }]
+    }],
+    history: JSON.parse(teacherRow[4] || '[]')
   };
 
   const lessons = JSON.parse(teacherRow[3] || '[]');
@@ -979,15 +1167,15 @@ function getTeacherSchedule(teacherId) {
     const timeMatch = lesson.time.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
     if (timeMatch) {
       const [_, startHour, startMin, endHour, endMin] = timeMatch;
-      const timeNumber = parseInt(lesson.time.split('.')[0]);
+      const timeNumber = parseInt(lesson.time.split('.')[0]) || 1;
       
       daysMap.get(dayKey).lessons.push({
         number: timeNumber,
         startAt: `${startHour}:${startMin}`,
         endAt: `${endHour}:${endMin}`,
         timeRange: lesson.time,
-        originalTimeTitle: `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
-        additionalSlots: [],
+        originalTimeTitle: lesson.originalTimeTitle || `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
+        additionalSlots: lesson.additionalSlots || [],
         lessonName: lesson.subject,
         type: lesson.type,
         teacherName: teacherRow[1],
@@ -1018,18 +1206,6 @@ function getTeacherSchedule(teacherId) {
  * Получает расписание аудитории
  */
 function getAuditorySchedule(auditoryId) {
-  const cache = CacheService.getScriptCache();
-  const cachedData = cache.get('auditories_data');
-  
-  // if (cachedData) {
-  //   const auditories = JSON.parse(cachedData);
-  //   const auditory = auditors.find(a => a.id === auditoryId);
-  //   if (auditory) {
-  //     return ContentService.createTextOutput(JSON.stringify(auditory))
-  //       .setMimeType(ContentService.MimeType.JSON);
-  //   }
-  // }
-  
   const sheet = getAuditoriesSheet();
   const data = sheet.getDataRange().getValues();
   const auditoryRow = data.find((r, i) => i > 0 && String(r[0]) === String(auditoryId));
@@ -1048,7 +1224,8 @@ function getAuditorySchedule(auditoryId) {
         startDate: null
       },
       days: []
-    }]
+    }],
+    history: JSON.parse(auditoryRow[4] || '[]')
   };
 
   const lessons = JSON.parse(auditoryRow[3] || '[]');
@@ -1071,15 +1248,15 @@ function getAuditorySchedule(auditoryId) {
     const timeMatch = lesson.time.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
     if (timeMatch) {
       const [_, startHour, startMin, endHour, endMin] = timeMatch;
-      const timeNumber = parseInt(lesson.time.split('.')[0]);
+      const timeNumber = parseInt(lesson.time.split('.')[0]) || 1;
       
       daysMap.get(dayKey).lessons.push({
         number: timeNumber,
         startAt: `${startHour}:${startMin}`,
         endAt: `${endHour}:${endMin}`,
         timeRange: lesson.time,
-        originalTimeTitle: `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
-        additionalSlots: [],
+        originalTimeTitle: lesson.originalTimeTitle || `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
+        additionalSlots: lesson.additionalSlots || [],
         lessonName: lesson.subject,
         type: lesson.type,
         teacherName: lesson.teacher,
@@ -1113,10 +1290,10 @@ function getTeachers() {
   const cache = CacheService.getScriptCache();
   const cachedData = cache.get('teachers_list');
   
-  // if (cachedData) {
-  //   return ContentService.createTextOutput(cachedData)
-  //     .setMimeType(ContentService.MimeType.JSON);
-  // }
+  if (cachedData) {
+    return ContentService.createTextOutput(cachedData)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   const sheet = getTeachersSheet();
   const data = sheet.getDataRange().getValues();
@@ -1143,10 +1320,10 @@ function getAuditories() {
   const cache = CacheService.getScriptCache();
   const cachedData = cache.get('auditories_list');
   
-  // if (cachedData) {
-  //   return ContentService.createTextOutput(cachedData)
-  //     .setMimeType(ContentService.MimeType.JSON);
-  // }
+  if (cachedData) {
+    return ContentService.createTextOutput(cachedData)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   const sheet = getAuditoriesSheet();
   const data = sheet.getDataRange().getValues();
@@ -1173,10 +1350,10 @@ function getTeachersWithSchedule() {
   const cache = CacheService.getScriptCache();
   const cachedData = cache.get('teachers_data');
   
-  // if (cachedData) {
-  //   return ContentService.createTextOutput(cachedData)
-  //     .setMimeType(ContentService.MimeType.JSON);
-  // }
+  if (cachedData) {
+    return ContentService.createTextOutput(cachedData)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   const sheet = getTeachersSheet();
   const data = sheet.getDataRange().getValues();
@@ -1204,10 +1381,10 @@ function getAuditoriesWithSchedule() {
   const cache = CacheService.getScriptCache();
   const cachedData = cache.get('auditories_data');
   
-  // if (cachedData) {
-  //   return ContentService.createTextOutput(cachedData)
-  //     .setMimeType(ContentService.MimeType.JSON);
-  // }
+  if (cachedData) {
+    return ContentService.createTextOutput(cachedData)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   
   const sheet = getAuditoriesSheet();
   const data = sheet.getDataRange().getValues();
