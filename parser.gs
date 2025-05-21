@@ -443,21 +443,77 @@ function getDirectionSchedule(fileId) {
     return null;
   }
 
+  function getTimeSlotByNumber(number) {
+    const timeSlots = {
+      1: { start: "08:30", end: "10:05" },
+      2: { start: "10:15", end: "11:50" },
+      3: { start: "12:15", end: "13:50" },
+      4: { start: "14:00", end: "15:35" },
+      5: { start: "15:45", end: "17:20" },
+      6: { start: "17:30", end: "19:05" },
+      7: { start: "19:15", end: "20:50" }
+    };
+    
+    return timeSlots[number] || timeSlots[1];
+  }
+
   function parseTime(timeStr) {
     if (!timeStr) {
-      const match = timeStr && timeStr.match(/(\d+)\./);
-      const number = match ? parseInt(match[1]) : 1;
-      
-      const timeSlots = {
-        1: { start: "08:30", end: "10:05" },
-        2: { start: "10:15", end: "11:50" },
-        3: { start: "12:15", end: "13:50" },
-        4: { start: "14:00", end: "15:35" },
-        5: { start: "15:45", end: "17:20" },
-        6: { start: "17:30", end: "19:05" }
+      return {
+        number: 1,
+        startAt: "08:30",
+        endAt: "10:05",
+        timeRange: "08:30-10:05",
+        originalTimeTitle: "1. 08.30-10.05",
+        additionalSlots: []
       };
+    }
+
+    const numberOnlyMatch = timeStr.match(/^(\d+)$/);
+    if (numberOnlyMatch) {
+      const number = parseInt(numberOnlyMatch[1]);
+      const slot = getTimeSlotByNumber(number);
+      return {
+        number: number,
+        startAt: slot.start,
+        endAt: slot.end,
+        timeRange: `${slot.start}-${slot.end}`,
+        originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+        additionalSlots: []
+      };
+    }
+
+    const parenNumberMatch = timeStr.match(/\((\d+)\s*пара\)/);
+    if (parenNumberMatch) {
+      const number = parseInt(parenNumberMatch[1]);
+      const slot = getTimeSlotByNumber(number);
+      return {
+        number: number,
+        startAt: slot.start,
+        endAt: slot.end,
+        timeRange: `${slot.start}-${slot.end}`,
+        originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+        additionalSlots: []
+      };
+    }
+
+    const dotNumberMatch = timeStr.match(/^(\d+)\./);
+    if (dotNumberMatch) {
+      const number = parseInt(dotNumberMatch[1]);
+      const slot = getTimeSlotByNumber(number);
       
-      const slot = timeSlots[number] || timeSlots[1];
+      const timeMatch = timeStr.match(/(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
+      if (timeMatch) {
+        const [_, startHour, startMin, endHour, endMin] = timeMatch;
+        return {
+          number: number,
+          startAt: `${startHour}:${startMin}`,
+          endAt: `${endHour}:${endMin}`,
+          timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`,
+          originalTimeTitle: timeStr,
+          additionalSlots: []
+        };
+      }
       
       return {
         number: number,
@@ -468,11 +524,24 @@ function getDirectionSchedule(fileId) {
         additionalSlots: []
       };
     }
-    
-    const timeSlots = timeStr.split(',').map(slot => slot.trim());
-    const parsedSlots = timeSlots.map(slot => {
+
+    const slots = timeStr.split(',').map(slot => slot.trim());
+    const parsedSlots = slots.map(slot => {
       const match = slot.match(/(\d+)\.\s*(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
-      if (!match) return null;
+      if (!match) {
+        const numberMatch = slot.match(/(\d+)\./);
+        if (numberMatch) {
+          const number = parseInt(numberMatch[1]);
+          const timeSlot = getTimeSlotByNumber(number);
+          return {
+            number: number,
+            startAt: timeSlot.start,
+            endAt: timeSlot.end,
+            timeRange: `${timeSlot.start}-${timeSlot.end}`
+          };
+        }
+        return null;
+      }
       
       const [_, number, startHour, startMin, endHour, endMin] = match;
       return {
@@ -484,31 +553,16 @@ function getDirectionSchedule(fileId) {
     }).filter(slot => slot !== null);
 
     if (parsedSlots.length === 0) {
-      const numberMatch = timeStr.match(/(\d+)\./);
-      if (numberMatch) {
-        const number = parseInt(numberMatch[1]);
-        const timeSlots = {
-          1: { start: "08:30", end: "10:05" },
-          2: { start: "10:15", end: "11:50" },
-          3: { start: "12:15", end: "13:50" },
-          4: { start: "14:00", end: "15:35" },
-          5: { start: "15:45", end: "17:20" },
-          6: { start: "17:30", end: "19:05" }
-        };
-        const slot = timeSlots[number] || timeSlots[1];
-        
-        return {
-          number: number,
-          startAt: slot.start,
-          endAt: slot.end,
-          timeRange: `${slot.start}-${slot.end}`,
-          originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
-          additionalSlots: []
-        };
-      }
-      return null;
+      return {
+        number: 1,
+        startAt: "08:30",
+        endAt: "10:05",
+        timeRange: "08:30-10:05",
+        originalTimeTitle: "1. 08.30-10.05",
+        additionalSlots: []
+      };
     }
-    
+
     return {
       ...parsedSlots[0],
       originalTimeTitle: timeStr,
@@ -518,10 +572,21 @@ function getDirectionSchedule(fileId) {
 
   function parseSubject(subjectStr) {
     if (!subjectStr) return null;
+
+    const subjects = subjectStr.split(/\n\s*\n/).filter(Boolean);
+    if (subjects.length > 1) {
+      return subjects.map(s => {
+        const parsed = parseSubject(s);
+        if (parsed) {
+          parsed.isPartOfComposite = true;
+        }
+        return parsed;
+      }).filter(Boolean);
+    }
     
     const lowerSubject = subjectStr.toLowerCase();
-    const parts = subjectStr.split(',');
-    const name = parts[0].trim();
+    const parts = subjectStr.split(',').map(p => p.trim());
+    let name = parts[0].trim();
     
     const isDistant = lowerSubject.includes('дистант') || 
                      lowerSubject.includes('онлайн') ||
@@ -541,8 +606,8 @@ function getDirectionSchedule(fileId) {
     if (isPhysicalEducation) {
       type = 'practice';
     } else {
-      type = subjectStr.toLowerCase().includes('лек') ? 'lecture' : 
-             subjectStr.toLowerCase().includes('практ') ? 'practice' : 'other';
+      type = lowerSubject.includes('лек') ? 'lecture' : 
+             lowerSubject.includes('практ') ? 'practice' : 'other';
     }
 
     let teacher = null;
@@ -582,6 +647,13 @@ function getDirectionSchedule(fileId) {
     const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
     const startDate = startDateMatch ? startDateMatch[1] : null;
     const endDate = endDateMatch ? endDateMatch[1] : null;
+
+    const lessonNumberMatch = subjectStr.match(/\((\d+)\s*пара\)/);
+    const lessonNumber = lessonNumberMatch ? parseInt(lessonNumberMatch[1]) : null;
+    
+    if (lessonNumberMatch) {
+      name = name.replace(/\s*\(\d+\s*пара\)/, '').trim();
+    }
     
     let cleanName = name;
     if (startDate) {
@@ -605,7 +677,8 @@ function getDirectionSchedule(fileId) {
       durationMinutes: 90,
       isShort: false,
       isLecture: type === 'lecture',
-      originalText: subjectStr.trim()
+      originalText: subjectStr.trim(),
+      lessonNumber: lessonNumber
     };
   }
 
@@ -625,25 +698,53 @@ function getDirectionSchedule(fileId) {
     if (dayName && ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"].includes(dayName)) {
       if (currentDay) {
         Object.entries(currentDaySchedule).forEach(([course, lessons]) => {
-          if (lessons.length > 0) {
-            const courseNumber = course === 'first' ? 1 : course === 'second' ? 2 : course === 'third' ? 3 : 4;
+          if (lessons.length > 0 && courseInfo[course]) {
+            const processedLessons = [];
+            
+            lessons.forEach(lesson => {
+              const parsedSubjects = parseSubject(lesson.subject);
+              if (Array.isArray(parsedSubjects)) {
+                parsedSubjects.forEach(parsedSubject => {
+                  if (parsedSubject && parsedSubject.lessonNumber) {
+                    const timeInfo = parseTime(`${parsedSubject.lessonNumber}`);
+                    if (timeInfo) {
+                      processedLessons.push({
+                        ...timeInfo,
+                        ...parsedSubject
+                      });
+                    }
+                  }
+                });
+              } else if (parsedSubjects) {
+                const timeInfo = parseTime(lesson.time);
+                if (timeInfo) {
+                  processedLessons.push({
+                    ...timeInfo,
+                    ...parsedSubjects
+                  });
+                }
+              }
+            });
+
+            processedLessons.sort((a, b) => {
+              if (a.number === b.number) {
+                if (a.type === 'lecture' && b.type !== 'lecture') return -1;
+                if (a.type !== 'lecture' && b.type === 'lecture') return 1;
+                return 0;
+              }
+              return a.number - b.number;
+            });
+
             schedule.items.push({
-              number: courseNumber,
-              courseInfo: courseInfo[course] || {
-                number: courseNumber,
-                course: courseNumber,
-                startDate: null
-              },
+              number: course === 'first' ? 1 : course === 'second' ? 2 : course === 'third' ? 3 : 4,
+              courseInfo: courseInfo[course],
               days: [{
                 info: {
                   type: ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"].indexOf(currentDay),
                   weekNumber: 1,
                   date: new Date().toISOString()
                 },
-                lessons: lessons.map(lesson => ({
-                  ...parseTime(lesson.time),
-                  ...parseSubject(lesson.subject)
-                })).filter(lesson => lesson.lessonName)
+                lessons: processedLessons
               }]
             });
           }
@@ -678,15 +779,13 @@ function getDirectionSchedule(fileId) {
         if (subject || mergedValue) {
           const actualSubject = subject || mergedValue;
           const last = currentDaySchedule[course][currentDaySchedule[course].length - 1];
-          const isFirstLesson = currentDaySchedule[course].length === 0;
           
           if (last && last.subject === actualSubject) {
             last.time += ", " + (time || "");
           } else {
             currentDaySchedule[course].push({ 
               time: time || "", 
-              subject: actualSubject,
-              isFirstLesson
+              subject: actualSubject
             });
           }
         } else if (currentDaySchedule[course].length > 0 && isMergedCell(excelRowIdx, courseCol)) {
@@ -698,25 +797,53 @@ function getDirectionSchedule(fileId) {
 
   if (currentDay) {
     Object.entries(currentDaySchedule).forEach(([course, lessons]) => {
-      if (lessons.length > 0) {
-        const courseNumber = course === 'first' ? 1 : course === 'second' ? 2 : course === 'third' ? 3 : 4;
+      if (lessons.length > 0 && courseInfo[course]) {
+        const processedLessons = [];
+        
+        lessons.forEach(lesson => {
+          const parsedSubjects = parseSubject(lesson.subject);
+          if (Array.isArray(parsedSubjects)) {
+            parsedSubjects.forEach(parsedSubject => {
+              if (parsedSubject && parsedSubject.lessonNumber) {
+                const timeInfo = parseTime(`${parsedSubject.lessonNumber}`);
+                if (timeInfo) {
+                  processedLessons.push({
+                    ...timeInfo,
+                    ...parsedSubject
+                  });
+                }
+              }
+            });
+          } else if (parsedSubjects) {
+            const timeInfo = parseTime(lesson.time);
+            if (timeInfo) {
+              processedLessons.push({
+                ...timeInfo,
+                ...parsedSubjects
+              });
+            }
+          }
+        });
+
+        processedLessons.sort((a, b) => {
+          if (a.number === b.number) {
+            if (a.type === 'lecture' && b.type !== 'lecture') return -1;
+            if (a.type !== 'lecture' && b.type === 'lecture') return 1;
+            return 0;
+          }
+          return a.number - b.number;
+        });
+
         schedule.items.push({
-          number: courseNumber,
-          courseInfo: courseInfo[course] || {
-            number: courseNumber,
-            course: courseNumber,
-            startDate: null
-          },
+          number: course === 'first' ? 1 : course === 'second' ? 2 : course === 'third' ? 3 : 4,
+          courseInfo: courseInfo[course],
           days: [{
             info: {
               type: ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"].indexOf(currentDay),
               weekNumber: 1,
               date: new Date().toISOString()
             },
-            lessons: lessons.map(lesson => ({
-              ...parseTime(lesson.time),
-              ...parseSubject(lesson.subject)
-            })).filter(lesson => lesson.lessonName)
+            lessons: processedLessons
           }]
         });
       }
@@ -866,74 +993,42 @@ function updateTeachersAndAuditories() {
       schedule.items.forEach(item => {
         item.days.forEach(day => {
           const groupedLessons = [];
-          let currentGroup = null;
           
           day.lessons.forEach(lesson => {
-            if (currentGroup && 
-                currentGroup.lessonName === lesson.lessonName && 
-                currentGroup.auditoryName === lesson.auditoryName &&
-                currentGroup.type === lesson.type) {
-              currentGroup.originalTimeTitle += `, ${lesson.originalTimeTitle}`;
-              currentGroup.additionalSlots.push({
-                number: lesson.number,
-                startAt: lesson.startAt,
-                endAt: lesson.endAt,
-                timeRange: lesson.timeRange
+            const parsedSubjects = parseSubject(lesson.subject);
+            if (Array.isArray(parsedSubjects)) {
+              parsedSubjects.forEach(parsedSubject => {
+                if (parsedSubject && parsedSubject.lessonNumber) {
+                  const timeInfo = parseTime(`${parsedSubject.lessonNumber}`);
+                  if (timeInfo) {
+                    groupedLessons.push({
+                      ...timeInfo,
+                      ...parsedSubject
+                    });
+                  }
+                }
               });
-            } else {
-              currentGroup = {...lesson};
-              groupedLessons.push(currentGroup);
+            } else if (parsedSubjects) {
+              const timeInfo = parseTime(lesson.time);
+              if (timeInfo) {
+                groupedLessons.push({
+                  ...timeInfo,
+                  ...parsedSubjects
+                });
+              }
             }
           });
 
-          groupedLessons.forEach(lesson => {
-            if (lesson.teacherName) {
-              const teacherId = lesson.teacherName.toLowerCase().replace(/\s+/g, '_');
-              if (!teachersMap.has(teacherId)) {
-                teachersMap.set(teacherId, {
-                  id: teacherId,
-                  name: lesson.teacherName,
-                  schedule: []
-                });
-              }
-              
-              teachersMap.get(teacherId).schedule.push({
-                direction: directionName,
-                group: item.courseInfo.number,
-                day: day.info.type,
-                time: lesson.timeRange,
-                originalTimeTitle: lesson.originalTimeTitle,
-                additionalSlots: lesson.additionalSlots,
-                subject: lesson.lessonName,
-                auditory: lesson.auditoryName,
-                type: lesson.type,
-                isDistant: lesson.isDistant || lesson.type === 'distant'
-              });
+          groupedLessons.sort((a, b) => {
+            if (a.number === b.number) {
+              if (a.type === 'lecture' && b.type !== 'lecture') return -1;
+              if (a.type !== 'lecture' && b.type === 'lecture') return 1;
+              return 0;
             }
-            
-            if (lesson.auditoryName) {
-              const auditoryId = String(lesson.auditoryName);
-              if (!auditoriesMap.has(auditoryId)) {
-                auditoriesMap.set(auditoryId, {
-                  id: auditoryId,
-                  number: lesson.auditoryName,
-                  schedule: []
-                });
-              }
-              
-              auditoriesMap.get(auditoryId).schedule.push({
-                direction: directionName,
-                group: item.courseInfo.number,
-                day: day.info.type,
-                time: lesson.timeRange,
-                originalTimeTitle: lesson.originalTimeTitle,
-                additionalSlots: lesson.additionalSlots,
-                subject: lesson.lessonName,
-                teacher: lesson.teacherName,
-                type: lesson.type
-              });
-            }
+            return a.number - b.number;
           });
+          
+          day.lessons = groupedLessons;
         });
       });
     } catch (e) {
@@ -1169,30 +1264,32 @@ function getTeacherSchedule(teacherId) {
       const [_, startHour, startMin, endHour, endMin] = timeMatch;
       const timeNumber = parseInt(lesson.time.split('.')[0]) || 1;
       
-      daysMap.get(dayKey).lessons.push({
-        number: timeNumber,
-        startAt: `${startHour}:${startMin}`,
-        endAt: `${endHour}:${endMin}`,
-        timeRange: lesson.time,
-        originalTimeTitle: lesson.originalTimeTitle || `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
-        additionalSlots: lesson.additionalSlots || [],
-        lessonName: lesson.subject,
-        type: lesson.type,
-        teacherName: teacherRow[1],
-        auditoryName: lesson.auditory,
-        isDistant: lesson.isDistant || lesson.type === 'distant',
-        isStream: lesson.type === 'stream',
-        isDivision: lesson.type === 'division',
-        startDate: null,
-        endDate: null,
-        duration: 2,
-        durationMinutes: 90,
-        isShort: false,
-        isLecture: lesson.type === 'lecture',
-        originalText: `${lesson.subject}, ${lesson.type}, ${teacherRow[1]}, ${lesson.auditory || 'онлайн'}`,
-        groups: lesson.group,
-        direction: lesson.direction
-      });
+      const parsedSubject = parseSubject(lesson.subject);
+      if (parsedSubject) {
+        const timeInfo = parseTime(lesson.time);
+        if (timeInfo) {
+          const lesson = {
+            ...timeInfo,
+            ...parsedSubject
+          };
+          
+          daysMap.get(dayKey).lessons.push(lesson);
+          
+          if (parsedSubject.additionalLessons) {
+            parsedSubject.additionalLessons.forEach(additionalLesson => {
+              if (additionalLesson) {
+                const additionalTimeInfo = parseTime(`${additionalLesson.lessonNumber}`);
+                if (additionalTimeInfo) {
+                  daysMap.get(dayKey).lessons.push({
+                    ...additionalTimeInfo,
+                    ...additionalLesson
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
     }
   });
   
@@ -1250,30 +1347,32 @@ function getAuditorySchedule(auditoryId) {
       const [_, startHour, startMin, endHour, endMin] = timeMatch;
       const timeNumber = parseInt(lesson.time.split('.')[0]) || 1;
       
-      daysMap.get(dayKey).lessons.push({
-        number: timeNumber,
-        startAt: `${startHour}:${startMin}`,
-        endAt: `${endHour}:${endMin}`,
-        timeRange: lesson.time,
-        originalTimeTitle: lesson.originalTimeTitle || `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
-        additionalSlots: lesson.additionalSlots || [],
-        lessonName: lesson.subject,
-        type: lesson.type,
-        teacherName: lesson.teacher,
-        auditoryName: auditoryRow[1],
-        isDistant: lesson.isDistant || lesson.type === 'distant',
-        isStream: lesson.type === 'stream',
-        isDivision: lesson.type === 'division',
-        startDate: null,
-        endDate: null,
-        duration: 2,
-        durationMinutes: 90,
-        isShort: false,
-        isLecture: lesson.type === 'lecture',
-        originalText: `${lesson.subject}, ${lesson.type}, ${lesson.teacher}, ${auditoryRow[1]}`,
-        groups: lesson.group,
-        direction: lesson.direction
-      });
+      const parsedSubject = parseSubject(lesson.subject);
+      if (parsedSubject) {
+        const timeInfo = parseTime(lesson.time);
+        if (timeInfo) {
+          const lesson = {
+            ...timeInfo,
+            ...parsedSubject
+          };
+          
+          daysMap.get(dayKey).lessons.push(lesson);
+          
+          if (parsedSubject.additionalLessons) {
+            parsedSubject.additionalLessons.forEach(additionalLesson => {
+              if (additionalLesson) {
+                const additionalTimeInfo = parseTime(`${additionalLesson.lessonNumber}`);
+                if (additionalTimeInfo) {
+                  daysMap.get(dayKey).lessons.push({
+                    ...additionalTimeInfo,
+                    ...additionalLesson
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
     }
   });
   
