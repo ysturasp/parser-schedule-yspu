@@ -457,7 +457,7 @@ function getDirectionSchedule(fileId) {
     return timeSlots[number] || timeSlots[1];
   }
 
-  function parseTime(timeStr) {
+  function parseTime(timeStr, customTimeInfo = null) {
     if (!timeStr) {
       return {
         number: 1,
@@ -468,11 +468,55 @@ function getDirectionSchedule(fileId) {
         additionalSlots: []
       };
     }
+      
+      const timeSlots = {
+        1: { start: "08:30", end: "10:05" },
+        2: { start: "10:15", end: "11:50" },
+        3: { start: "12:15", end: "13:50" },
+        4: { start: "14:00", end: "15:35" },
+        5: { start: "15:45", end: "17:20" },
+      6: { start: "17:30", end: "19:05" },
+      7: { start: "19:15", end: "20:50" }
+    };
+
+    if (customTimeInfo) {
+      if (customTimeInfo.customEndTime) {
+        const timeParts = timeStr.split(',').map(part => part.trim());
+        if (timeParts.length > 1) {
+          const parsedSlots = timeParts.map(slot => {
+            const numberMatch = slot.match(/^(\d+)\./);
+            if (numberMatch) {
+              const number = parseInt(numberMatch[1]);
+              const timeSlot = timeSlots[number];
+              if (timeSlot) {
+                return {
+                  number: number,
+                  startAt: timeSlot.start,
+                  endAt: timeSlot.end,
+                  timeRange: `${timeSlot.start}-${timeSlot.end}`,
+                  originalTimeTitle: `${number}. ${timeSlot.start.replace(':', '.')}-${timeSlot.end.replace(':', '.')}`,
+                  additionalSlots: []
+                };
+              }
+            }
+            return null;
+          }).filter(Boolean);
+
+          if (parsedSlots.length > 0) {
+            return {
+              ...parsedSlots[0],
+              additionalSlots: parsedSlots.slice(1),
+              customEndTime: customTimeInfo.customEndTime
+            };
+          }
+        }
+      }
+    }
 
     const numberOnlyMatch = timeStr.match(/^(\d+)$/);
     if (numberOnlyMatch) {
       const number = parseInt(numberOnlyMatch[1]);
-      const slot = getTimeSlotByNumber(number);
+      const slot = timeSlots[number] || timeSlots[1];
       return {
         number: number,
         startAt: slot.start,
@@ -486,7 +530,7 @@ function getDirectionSchedule(fileId) {
     const parenNumberMatch = timeStr.match(/\((\d+)\s*пара\)/);
     if (parenNumberMatch) {
       const number = parseInt(parenNumberMatch[1]);
-      const slot = getTimeSlotByNumber(number);
+      const slot = timeSlots[number] || timeSlots[1];
       return {
         number: number,
         startAt: slot.start,
@@ -496,32 +540,32 @@ function getDirectionSchedule(fileId) {
         additionalSlots: []
       };
     }
-
+    
     const dotNumberMatch = timeStr.match(/^(\d+)\./);
     if (dotNumberMatch) {
       const number = parseInt(dotNumberMatch[1]);
-      const slot = getTimeSlotByNumber(number);
+      const slot = timeSlots[number] || timeSlots[1];
       
       const timeMatch = timeStr.match(/(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
       if (timeMatch) {
         const [_, startHour, startMin, endHour, endMin] = timeMatch;
-        return {
+      return {
           number: number,
-          startAt: `${startHour}:${startMin}`,
-          endAt: `${endHour}:${endMin}`,
+        startAt: `${startHour}:${startMin}`,
+        endAt: `${endHour}:${endMin}`,
           timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`,
           originalTimeTitle: timeStr,
           additionalSlots: []
         };
       }
-      
-      return {
-        number: number,
-        startAt: slot.start,
-        endAt: slot.end,
-        timeRange: `${slot.start}-${slot.end}`,
-        originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
-        additionalSlots: []
+        
+        return {
+          number: number,
+          startAt: slot.start,
+          endAt: slot.end,
+          timeRange: `${slot.start}-${slot.end}`,
+          originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+          additionalSlots: []
       };
     }
 
@@ -532,15 +576,15 @@ function getDirectionSchedule(fileId) {
         const numberMatch = slot.match(/(\d+)\./);
         if (numberMatch) {
           const number = parseInt(numberMatch[1]);
-          const timeSlot = getTimeSlotByNumber(number);
+          const timeSlot = timeSlots[number] || timeSlots[1];
           return {
             number: number,
             startAt: timeSlot.start,
             endAt: timeSlot.end,
             timeRange: `${timeSlot.start}-${timeSlot.end}`
-          };
-        }
-        return null;
+        };
+      }
+      return null;
       }
       
       const [_, number, startHour, startMin, endHour, endMin] = match;
@@ -562,7 +606,7 @@ function getDirectionSchedule(fileId) {
         additionalSlots: []
       };
     }
-
+    
     return {
       ...parsedSlots[0],
       originalTimeTitle: timeStr,
@@ -570,13 +614,13 @@ function getDirectionSchedule(fileId) {
     };
   }
 
-  function parseSubject(subjectStr) {
+  function parseSubject(subjectStr, defaultTime = "") {
     if (!subjectStr) return null;
 
     const subjects = subjectStr.split(/\n\s*\n/).filter(Boolean);
     if (subjects.length > 1) {
       return subjects.map(s => {
-        const parsed = parseSubject(s);
+        const parsed = parseSubject(s, defaultTime);
         if (parsed) {
           parsed.isPartOfComposite = true;
         }
@@ -587,6 +631,19 @@ function getDirectionSchedule(fileId) {
     const lowerSubject = subjectStr.toLowerCase();
     const parts = subjectStr.split(',').map(p => p.trim());
     let name = parts[0].trim();
+    
+    let customStartTime = null;
+    let customEndTime = null;
+    
+    const startTimeMatch = subjectStr.match(/с\s*(\d{2}):(\d{2})/);
+    if (startTimeMatch) {
+      customStartTime = `${startTimeMatch[1]}:${startTimeMatch[2]}`;
+    }
+    
+    const endTimeMatch = subjectStr.match(/до\s*(\d{2}):(\d{2})/);
+    if (endTimeMatch) {
+      customEndTime = `${endTimeMatch[1]}:${endTimeMatch[2]}`;
+    }
     
     const isDistant = lowerSubject.includes('дистант') || 
                      lowerSubject.includes('онлайн') ||
@@ -640,28 +697,48 @@ function getDirectionSchedule(fileId) {
     
     let subjectWithoutDates = subjectStr.replace(/(?:с|по)\s*\d{2}\.\d{2}\.\d{4}/g, '');
     
-    const roomMatch = subjectWithoutDates.match(/,\s*(?:ауд\.)?\s*(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)\s*(?:\(|$|,|\s+|ЕГФ)/);
-    const room = roomMatch ? roomMatch[1] : null;
+    const buildingMatch = subjectWithoutDates.match(/(\d+)(?:-[её]|е|ое)?\s*(?:уч\.?|учебное)?\s*зд(?:ание)?\.?/i);
+    const building = buildingMatch ? buildingMatch[1] : null;
+    
+    let room = null;
+    const roomMatch = subjectWithoutDates.match(/,\s*(?:ауд\.)?\s*(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)\s*(?:\(|$|,|\s+|ЕГФ|гл\.з\.)/);
+    const sportHallMatch = subjectWithoutDates.match(/(?:спорт\.?\s*зал|спортзал|спортивный\s*зал)/i);
+    
+    if (roomMatch) {
+      room = roomMatch[1];
+    } else if (sportHallMatch) {
+      room = "спортзал";
+    }
+    
+    if (building && room) {
+      room = `${building}-${room}`;
+    }
     
     const startDateMatch = subjectStr.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
     const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
     const startDate = startDateMatch ? startDateMatch[1] : null;
     const endDate = endDateMatch ? endDateMatch[1] : null;
-
+    
     const lessonNumberMatch = subjectStr.match(/\((\d+)\s*пара\)/);
     const lessonNumber = lessonNumberMatch ? parseInt(lessonNumberMatch[1]) : null;
     
-    if (lessonNumberMatch) {
-      name = name.replace(/\s*\(\d+\s*пара\)/, '').trim();
-    }
-    
     let cleanName = name;
-    if (startDate) {
-        cleanName = cleanName.replace(/с\s*\d{2}\.\d{2}\.\d{4}/, '').trim();
-    }
-    if (endDate) {
-        cleanName = cleanName.replace(/по\s*\d{2}\.\d{2}\.\d{4}/, '').trim();
-    }
+    
+    cleanName = cleanName
+      .replace(/\s*\(лекции\)/i, '')
+      .replace(/\s*лек\./i, '')
+      .replace(/\s*практ\./i, '')
+      .replace(/\s*\(\d+\s*пара\)/, '')
+      .replace(/\s*с\s*\d{2}:\d{2}/, '')
+      .replace(/\s*до\s*\d{2}:\d{2}/, '')
+      .replace(/\s*с\s*\d{2}\.\d{2}\.\d{4}/, '')
+      .replace(/\s*по\s*\d{2}\.\d{2}\.\d{4}/, '')
+      .trim();
+
+    const timeInfo = {
+      customStartTime,
+      customEndTime
+    };
     
     return {
       lessonName: cleanName,
@@ -678,7 +755,9 @@ function getDirectionSchedule(fileId) {
       isShort: false,
       isLecture: type === 'lecture',
       originalText: subjectStr.trim(),
-      lessonNumber: lessonNumber
+      lessonNumber: lessonNumber,
+      defaultTime: defaultTime,
+      timeInfo: timeInfo
     };
   }
 
@@ -702,12 +781,27 @@ function getDirectionSchedule(fileId) {
             const processedLessons = [];
             
             lessons.forEach(lesson => {
-              const parsedSubjects = parseSubject(lesson.subject);
+              const parsedSubjects = parseSubject(lesson.subject, lesson.time);
               if (Array.isArray(parsedSubjects)) {
                 parsedSubjects.forEach(parsedSubject => {
-                  if (parsedSubject && parsedSubject.lessonNumber) {
-                    const timeInfo = parseTime(`${parsedSubject.lessonNumber}`);
-                    if (timeInfo) {
+                  const timeInfo = parsedSubject.lessonNumber ? 
+                    parseTime(`${parsedSubject.lessonNumber}`, parsedSubject.timeInfo) : 
+                    parseTime(parsedSubject.defaultTime, parsedSubject.timeInfo);
+                  if (timeInfo) {
+                    if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
+                      processedLessons.push({
+                        ...timeInfo,
+                        ...parsedSubject
+                      });
+                      
+                      timeInfo.additionalSlots.forEach(slot => {
+                        processedLessons.push({
+                          ...slot,
+                          ...parsedSubject,
+                          originalTimeTitle: slot.originalTimeTitle || slot.timeRange
+                        });
+                      });
+                    } else {
                       processedLessons.push({
                         ...timeInfo,
                         ...parsedSubject
@@ -716,12 +810,27 @@ function getDirectionSchedule(fileId) {
                   }
                 });
               } else if (parsedSubjects) {
-                const timeInfo = parseTime(lesson.time);
+                const timeInfo = parseTime(lesson.time, parsedSubjects.timeInfo);
                 if (timeInfo) {
-                  processedLessons.push({
-                    ...timeInfo,
-                    ...parsedSubjects
-                  });
+                  if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
+                    processedLessons.push({
+                      ...timeInfo,
+                      ...parsedSubjects
+                    });
+                    
+                    timeInfo.additionalSlots.forEach(slot => {
+                      processedLessons.push({
+                        ...slot,
+                        ...parsedSubjects,
+                        originalTimeTitle: slot.originalTimeTitle || slot.timeRange
+                      });
+                    });
+                  } else {
+                    processedLessons.push({
+                      ...timeInfo,
+                      ...parsedSubjects
+                    });
+                  }
                 }
               }
             });
@@ -801,12 +910,27 @@ function getDirectionSchedule(fileId) {
         const processedLessons = [];
         
         lessons.forEach(lesson => {
-          const parsedSubjects = parseSubject(lesson.subject);
+          const parsedSubjects = parseSubject(lesson.subject, lesson.time);
           if (Array.isArray(parsedSubjects)) {
             parsedSubjects.forEach(parsedSubject => {
-              if (parsedSubject && parsedSubject.lessonNumber) {
-                const timeInfo = parseTime(`${parsedSubject.lessonNumber}`);
-                if (timeInfo) {
+              const timeInfo = parsedSubject.lessonNumber ? 
+                parseTime(`${parsedSubject.lessonNumber}`, parsedSubject.timeInfo) : 
+                parseTime(parsedSubject.defaultTime, parsedSubject.timeInfo);
+              if (timeInfo) {
+                if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
+                  processedLessons.push({
+                    ...timeInfo,
+                    ...parsedSubject
+                  });
+                  
+                  timeInfo.additionalSlots.forEach(slot => {
+                    processedLessons.push({
+                      ...slot,
+                      ...parsedSubject,
+                      originalTimeTitle: slot.originalTimeTitle || slot.timeRange
+                    });
+                  });
+                } else {
                   processedLessons.push({
                     ...timeInfo,
                     ...parsedSubject
@@ -815,12 +939,27 @@ function getDirectionSchedule(fileId) {
               }
             });
           } else if (parsedSubjects) {
-            const timeInfo = parseTime(lesson.time);
+            const timeInfo = parseTime(lesson.time, parsedSubjects.timeInfo);
             if (timeInfo) {
-              processedLessons.push({
-                ...timeInfo,
-                ...parsedSubjects
-              });
+              if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
+                processedLessons.push({
+                  ...timeInfo,
+                  ...parsedSubjects
+                });
+                
+                timeInfo.additionalSlots.forEach(slot => {
+                  processedLessons.push({
+                    ...slot,
+                    ...parsedSubjects,
+                    originalTimeTitle: slot.originalTimeTitle || slot.timeRange
+                  });
+                });
+              } else {
+                processedLessons.push({
+                  ...timeInfo,
+                  ...parsedSubjects
+                });
+              }
             }
           }
         });
@@ -995,26 +1134,56 @@ function updateTeachersAndAuditories() {
           const groupedLessons = [];
           
           day.lessons.forEach(lesson => {
-            const parsedSubjects = parseSubject(lesson.subject);
+            const parsedSubjects = parseSubject(lesson.subject, lesson.time);
             if (Array.isArray(parsedSubjects)) {
               parsedSubjects.forEach(parsedSubject => {
-                if (parsedSubject && parsedSubject.lessonNumber) {
-                  const timeInfo = parseTime(`${parsedSubject.lessonNumber}`);
-                  if (timeInfo) {
+                const timeInfo = parsedSubject.lessonNumber ? 
+                  parseTime(`${parsedSubject.lessonNumber}`, parsedSubject.timeInfo) : 
+                  parseTime(parsedSubject.defaultTime, parsedSubject.timeInfo);
+                if (timeInfo) {
+                  if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
+                    groupedLessons.push({
+                      ...timeInfo,
+                      ...parsedSubject
+                    });
+                    
+                    timeInfo.additionalSlots.forEach(slot => {
+                      groupedLessons.push({
+                        ...slot,
+                        ...parsedSubject,
+                        originalTimeTitle: slot.originalTimeTitle || slot.timeRange
+                      });
+              });
+            } else {
                     groupedLessons.push({
                       ...timeInfo,
                       ...parsedSubject
                     });
                   }
-                }
-              });
+            }
+          });
             } else if (parsedSubjects) {
-              const timeInfo = parseTime(lesson.time);
+              const timeInfo = parseTime(lesson.time, parsedSubjects.timeInfo);
               if (timeInfo) {
-                groupedLessons.push({
-                  ...timeInfo,
-                  ...parsedSubjects
-                });
+                if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
+                  groupedLessons.push({
+                    ...timeInfo,
+                    ...parsedSubjects
+                  });
+                  
+                  timeInfo.additionalSlots.forEach(slot => {
+                    groupedLessons.push({
+                      ...slot,
+                      ...parsedSubjects,
+                      originalTimeTitle: slot.originalTimeTitle || slot.timeRange
+                    });
+                  });
+                } else {
+                  groupedLessons.push({
+                    ...timeInfo,
+                    ...parsedSubjects
+              });
+            }
               }
             }
           });
@@ -1238,12 +1407,10 @@ function getTeacherSchedule(teacherId) {
         startDate: null
       },
       days: []
-    }],
-    history: JSON.parse(teacherRow[4] || '[]')
+    }]
   };
 
   const lessons = JSON.parse(teacherRow[3] || '[]');
-  
   const daysMap = new Map();
   
   lessons.forEach(lesson => {
@@ -1264,32 +1431,51 @@ function getTeacherSchedule(teacherId) {
       const [_, startHour, startMin, endHour, endMin] = timeMatch;
       const timeNumber = parseInt(lesson.time.split('.')[0]) || 1;
       
-      const parsedSubject = parseSubject(lesson.subject);
-      if (parsedSubject) {
-        const timeInfo = parseTime(lesson.time);
-        if (timeInfo) {
-          const lesson = {
-            ...timeInfo,
-            ...parsedSubject
-          };
-          
-          daysMap.get(dayKey).lessons.push(lesson);
-          
-          if (parsedSubject.additionalLessons) {
-            parsedSubject.additionalLessons.forEach(additionalLesson => {
-              if (additionalLesson) {
-                const additionalTimeInfo = parseTime(`${additionalLesson.lessonNumber}`);
-                if (additionalTimeInfo) {
-                  daysMap.get(dayKey).lessons.push({
-                    ...additionalTimeInfo,
-                    ...additionalLesson
-                  });
-                }
-              }
-            });
-          }
-        }
+      const lessonData = {
+        number: timeNumber,
+        startAt: `${startHour}:${startMin}`,
+        endAt: `${endHour}:${endMin}`,
+        timeRange: lesson.time,
+        originalTimeTitle: `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
+        additionalSlots: [],
+        lessonName: lesson.subject,
+        type: lesson.type || 'other',
+        teacherName: teacherRow[1],
+        auditoryName: lesson.auditory,
+        isDistant: false,
+        isStream: false,
+        isDivision: false,
+        startDate: null,
+        endDate: null,
+        duration: 2,
+        durationMinutes: 90,
+        isShort: false,
+        isLecture: lesson.type === 'lecture',
+        originalText: `${lesson.subject}, ${teacherRow[1]}, ${lesson.auditory || ''}`,
+        groups: lesson.group,
+        direction: lesson.direction
+      };
+
+      const lowerSubject = lesson.subject.toLowerCase();
+      if (lowerSubject.includes('физ') || 
+          lowerSubject.includes('фк') || 
+          lowerSubject.includes('физическ') ||
+          lowerSubject.includes('элективные дисциплины по фк')) {
+        lessonData.type = 'practice';
+      } else if (lowerSubject.includes('лек')) {
+        lessonData.type = 'lecture';
+      } else if (lowerSubject.includes('практ')) {
+        lessonData.type = 'practice';
       }
+
+      lessonData.isDistant = lowerSubject.includes('дистант') || 
+                            lowerSubject.includes('онлайн') ||
+                            lowerSubject.includes('он-лайн') ||
+                            !lesson.auditory;
+      lessonData.isStream = lowerSubject.includes('поток');
+      lessonData.isDivision = lowerSubject.includes('подгруппа');
+      
+      daysMap.get(dayKey).lessons.push(lessonData);
     }
   });
   
@@ -1321,12 +1507,10 @@ function getAuditorySchedule(auditoryId) {
         startDate: null
       },
       days: []
-    }],
-    history: JSON.parse(auditoryRow[4] || '[]')
+    }]
   };
 
   const lessons = JSON.parse(auditoryRow[3] || '[]');
-  
   const daysMap = new Map();
   
   lessons.forEach(lesson => {
@@ -1347,32 +1531,50 @@ function getAuditorySchedule(auditoryId) {
       const [_, startHour, startMin, endHour, endMin] = timeMatch;
       const timeNumber = parseInt(lesson.time.split('.')[0]) || 1;
       
-      const parsedSubject = parseSubject(lesson.subject);
-      if (parsedSubject) {
-        const timeInfo = parseTime(lesson.time);
-        if (timeInfo) {
-          const lesson = {
-            ...timeInfo,
-            ...parsedSubject
-          };
-          
-          daysMap.get(dayKey).lessons.push(lesson);
-          
-          if (parsedSubject.additionalLessons) {
-            parsedSubject.additionalLessons.forEach(additionalLesson => {
-              if (additionalLesson) {
-                const additionalTimeInfo = parseTime(`${additionalLesson.lessonNumber}`);
-                if (additionalTimeInfo) {
-                  daysMap.get(dayKey).lessons.push({
-                    ...additionalTimeInfo,
-                    ...additionalLesson
-                  });
-                }
-              }
-            });
-          }
-        }
+      const lessonData = {
+        number: timeNumber,
+        startAt: `${startHour}:${startMin}`,
+        endAt: `${endHour}:${endMin}`,
+        timeRange: lesson.time,
+        originalTimeTitle: `${timeNumber}. ${startHour}.${startMin}-${endHour}.${endMin}`,
+        additionalSlots: [],
+        lessonName: lesson.subject,
+        type: lesson.type || 'other',
+        teacherName: lesson.teacher,
+        auditoryName: auditoryRow[1],
+        isDistant: false,
+        isStream: false,
+        isDivision: false,
+        startDate: null,
+        endDate: null,
+        duration: 2,
+        durationMinutes: 90,
+        isShort: false,
+        isLecture: lesson.type === 'lecture',
+        originalText: `${lesson.subject}, ${lesson.teacher || ''}, ${auditoryRow[1]}`,
+        groups: lesson.group,
+        direction: lesson.direction
+      };
+
+      const lowerSubject = lesson.subject.toLowerCase();
+      if (lowerSubject.includes('физ') || 
+          lowerSubject.includes('фк') || 
+          lowerSubject.includes('физическ') ||
+          lowerSubject.includes('элективные дисциплины по фк')) {
+        lessonData.type = 'practice';
+      } else if (lowerSubject.includes('лек')) {
+        lessonData.type = 'lecture';
+      } else if (lowerSubject.includes('практ')) {
+        lessonData.type = 'practice';
       }
+
+      lessonData.isDistant = lowerSubject.includes('дистант') || 
+                            lowerSubject.includes('онлайн') ||
+                            lowerSubject.includes('он-лайн');
+      lessonData.isStream = lowerSubject.includes('поток');
+      lessonData.isDivision = lowerSubject.includes('подгруппа');
+      
+      daysMap.get(dayKey).lessons.push(lessonData);
     }
   });
   
