@@ -93,7 +93,8 @@ function getDirections() {
     const initialData = createInitialDirectionsData();
     saveDirectionsToSheet(initialData);
     const jsonData = JSON.stringify(initialData, null, 2);
-    cache.put('directions_data', jsonData, 300);   return ContentService.createTextOutput(jsonData)
+    cache.put('directions_data', jsonData, 300);   
+    return ContentService.createTextOutput(jsonData)
       .setMimeType(ContentService.MimeType.JSON);
   }
   
@@ -105,6 +106,8 @@ function getDirections() {
       courses: JSON.parse(data[i][3] || '{}')
     });
   }
+  
+  directions.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   
   const jsonData = JSON.stringify(directions, null, 2);
   cache.put('directions_data', jsonData, 300); 
@@ -327,6 +330,333 @@ function saveCoursesToSheet(directionId, directionName, courses) {
 }
 
 /**
+ * Получает временной слот по его номеру
+ */
+function getTimeSlotByNumber(number) {
+  const timeSlots = {
+    1: { start: "08:30", end: "10:05" },
+    2: { start: "10:15", end: "11:50" },
+    3: { start: "12:15", end: "13:50" },
+    4: { start: "14:00", end: "15:35" },
+    5: { start: "15:45", end: "17:20" },
+    6: { start: "17:30", end: "19:05" },
+    7: { start: "19:15", end: "20:50" }
+  };
+  
+  return timeSlots[number] || timeSlots[1];
+}
+
+/**
+ * Парсит информацию о времени занятия
+ */
+function parseTime(timeStr, customTimeInfo = null) {
+  if (!timeStr) {
+    return {
+      number: 1,
+      startAt: "08:30",
+      endAt: "10:05",
+      timeRange: "08:30-10:05",
+      originalTimeTitle: "1. 08.30-10.05",
+      additionalSlots: []
+    };
+  }
+    
+  const timeSlots = {
+    1: { start: "08:30", end: "10:05" },
+    2: { start: "10:15", end: "11:50" },
+    3: { start: "12:15", end: "13:50" },
+    4: { start: "14:00", end: "15:35" },
+    5: { start: "15:45", end: "17:20" },
+    6: { start: "17:30", end: "19:05" },
+    7: { start: "19:15", end: "20:50" }
+  };
+
+  if (customTimeInfo) {
+    if (customTimeInfo.customEndTime) {
+      const timeParts = timeStr.split(',').map(part => part.trim());
+      if (timeParts.length > 1) {
+        const parsedSlots = timeParts.map(slot => {
+          const numberMatch = slot.match(/^(\d+)\./);
+          if (numberMatch) {
+            const number = parseInt(numberMatch[1]);
+            const timeSlot = timeSlots[number];
+            if (timeSlot) {
+              return {
+                number: number,
+                startAt: timeSlot.start,
+                endAt: timeSlot.end,
+                timeRange: `${timeSlot.start}-${timeSlot.end}`,
+                originalTimeTitle: `${number}. ${timeSlot.start.replace(':', '.')}-${timeSlot.end.replace(':', '.')}`,
+                additionalSlots: []
+              };
+            }
+          }
+          return null;
+        }).filter(Boolean);
+
+        if (parsedSlots.length > 0) {
+          return {
+            ...parsedSlots[0],
+            additionalSlots: parsedSlots.slice(1),
+            customEndTime: customTimeInfo.customEndTime
+          };
+        }
+      }
+    }
+  }
+
+  const numberOnlyMatch = timeStr.match(/^(\d+)$/);
+  if (numberOnlyMatch) {
+    const number = parseInt(numberOnlyMatch[1]);
+    const slot = timeSlots[number] || timeSlots[1];
+    return {
+      number: number,
+      startAt: slot.start,
+      endAt: slot.end,
+      timeRange: `${slot.start}-${slot.end}`,
+      originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+      additionalSlots: []
+    };
+  }
+
+  const parenNumberMatch = timeStr.match(/\((\d+)\s*пара\)/);
+  if (parenNumberMatch) {
+    const number = parseInt(parenNumberMatch[1]);
+    const slot = timeSlots[number] || timeSlots[1];
+    return {
+      number: number,
+      startAt: slot.start,
+      endAt: slot.end,
+      timeRange: `${slot.start}-${slot.end}`,
+      originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+      additionalSlots: []
+    };
+  }
+  
+  const dotNumberMatch = timeStr.match(/^(\d+)\./);
+  if (dotNumberMatch) {
+    const number = parseInt(dotNumberMatch[1]);
+    const slot = timeSlots[number] || timeSlots[1];
+    
+    const timeMatch = timeStr.match(/(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
+    if (timeMatch) {
+      const [_, startHour, startMin, endHour, endMin] = timeMatch;
+      return {
+        number: number,
+        startAt: `${startHour}:${startMin}`,
+        endAt: `${endHour}:${endMin}`,
+        timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`,
+        originalTimeTitle: timeStr,
+        additionalSlots: []
+      };
+    }
+      
+    return {
+      number: number,
+      startAt: slot.start,
+      endAt: slot.end,
+      timeRange: `${slot.start}-${slot.end}`,
+      originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+      additionalSlots: []
+    };
+  }
+
+  const slots = timeStr.split(',').map(slot => slot.trim());
+  const parsedSlots = slots.map(slot => {
+    const match = slot.match(/(\d+)\.\s*(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
+    if (!match) {
+      const numberMatch = slot.match(/(\d+)\./);
+      if (numberMatch) {
+        const number = parseInt(numberMatch[1]);
+        const timeSlot = timeSlots[number] || timeSlots[1];
+        return {
+          number: number,
+          startAt: timeSlot.start,
+          endAt: timeSlot.end,
+          timeRange: `${timeSlot.start}-${timeSlot.end}`
+        };
+      }
+      return null;
+    }
+    
+    const [_, number, startHour, startMin, endHour, endMin] = match;
+    return {
+      number: parseInt(number),
+      startAt: `${startHour}:${startMin}`,
+      endAt: `${endHour}:${endMin}`,
+      timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`
+    };
+  }).filter(slot => slot !== null);
+
+  if (parsedSlots.length === 0) {
+    return {
+      number: 1,
+      startAt: "08:30",
+      endAt: "10:05",
+      timeRange: "08:30-10:05",
+      originalTimeTitle: "1. 08.30-10.05",
+      additionalSlots: []
+    };
+  }
+  
+  return {
+    ...parsedSlots[0],
+    originalTimeTitle: timeStr,
+    additionalSlots: parsedSlots.slice(1)
+  };
+}
+
+/**
+ * Парсит информацию о предмете
+ */
+function parseSubject(subjectStr, defaultTime = "") {
+  if (!subjectStr) return null;
+
+  const subjects = subjectStr.split(/\n\s*\n/).filter(Boolean);
+  if (subjects.length > 1) {
+    return subjects.map(s => {
+      const parsed = parseSubject(s, defaultTime);
+      if (parsed) {
+        parsed.isPartOfComposite = true;
+      }
+      return parsed;
+    }).filter(Boolean);
+  }
+  
+  const lowerSubject = subjectStr.toLowerCase();
+  const parts = subjectStr.split(',').map(p => p.trim());
+  let name = parts[0].trim();
+  
+  let customStartTime = null;
+  let customEndTime = null;
+  
+  const startTimeMatch = subjectStr.match(/с\s*(\d{2}):(\d{2})/);
+  if (startTimeMatch) {
+    customStartTime = `${startTimeMatch[1]}:${startTimeMatch[2]}`;
+  }
+  
+  const endTimeMatch = subjectStr.match(/до\s*(\d{2}):(\d{2})/);
+  if (endTimeMatch) {
+    customEndTime = `${endTimeMatch[1]}:${endTimeMatch[2]}`;
+  }
+  
+  const isDistant = lowerSubject.includes('дистант') || 
+                   lowerSubject.includes('онлайн') ||
+                   lowerSubject.includes('он-лайн') ||
+                   parts.some(part => part.trim().toLowerCase() === 'онлайн') ||
+                   parts.some(part => part.trim().toLowerCase() === 'он-лайн');
+  
+  const isStream = lowerSubject.includes('поток');
+  const isDivision = lowerSubject.includes('подгруппа');
+  
+  const isPhysicalEducation = name.toLowerCase().includes('физ') || 
+                             name.toLowerCase().includes('фк') || 
+                             name.toLowerCase().includes('физическ') ||
+                             name.toLowerCase().includes('элективные дисциплины по фк');
+  
+  let type = 'other';
+  if (isPhysicalEducation) {
+    type = 'practice';
+  } else {
+    type = lowerSubject.includes('лек') ? 'lecture' : 
+           lowerSubject.includes('практ') ? 'practice' : 'other';
+  }
+
+  let teacher = null;
+  const teacherRegexPatterns = [
+    /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ][а-яё]+)\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\./,
+    /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
+    /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
+    /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s+([А-ЯЁ])\s+([А-ЯЁ][а-яё]+)/
+  ];
+
+  for (const pattern of teacherRegexPatterns) {
+    const match = subjectStr.match(pattern);
+    if (match) {
+      if (match[1].length > 1) {
+        teacher = `${match[1]} ${match[2]}.${match[3]}.`;
+      } else {
+        teacher = `${match[3]} ${match[1]}.${match[2]}.`;
+      }
+      break;
+    }
+  }
+
+  if (teacher) {
+    teacher = teacher.replace(/\s*\([^)]*\)/g, '')
+                    .replace(/\s+с\s+\d{2}:\d{2}/g, '')
+                    .replace(/\s+до\s+\d{2}\.\d{2}\.\d{4}/g, '')
+                    .replace(/\s+кроме\s+\d{2}\.\d{2}\.\d{4}/g, '')
+                    .trim();
+  }
+  
+  let subjectWithoutDates = subjectStr.replace(/(?:с|по)\s*\d{2}\.\d{2}\.\d{4}/g, '');
+  
+  const buildingMatch = subjectWithoutDates.match(/(\d+)(?:-[её]|е|ое)?\s*(?:уч\.?|учебное)?\s*зд(?:ание)?\.?/i);
+  const building = buildingMatch ? buildingMatch[1] : null;
+  
+  let room = null;
+  const roomMatch = subjectWithoutDates.match(/,\s*(?:ауд\.)?\s*(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)\s*(?:\(|$|,|\s+|ЕГФ|гл\.з\.)/);
+  const sportHallMatch = subjectWithoutDates.match(/(?:спорт\.?\s*зал|спортзал|спортивный\s*зал)/i);
+  
+  if (roomMatch) {
+    room = roomMatch[1];
+  } else if (sportHallMatch) {
+    room = "спортзал";
+  }
+  
+  if (building && room) {
+    room = `${building}-${room}`;
+  }
+  
+  const startDateMatch = subjectStr.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
+  const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
+  const startDate = startDateMatch ? startDateMatch[1] : null;
+  const endDate = endDateMatch ? endDateMatch[1] : null;
+  
+  const lessonNumberMatch = subjectStr.match(/\((\d+)\s*пара\)/);
+  const lessonNumber = lessonNumberMatch ? parseInt(lessonNumberMatch[1]) : null;
+  
+  let cleanName = name;
+  
+  cleanName = cleanName
+    .replace(/\s*\(лекции\)/i, '')
+    .replace(/\s*лек\./i, '')
+    .replace(/\s*практ\./i, '')
+    .replace(/\s*\(\d+\s*пара\)/, '')
+    .replace(/\s*с\s*\d{2}:\d{2}/, '')
+    .replace(/\s*до\s*\d{2}:\d{2}/, '')
+    .replace(/\s*с\s*\d{2}\.\d{2}\.\d{4}/, '')
+    .replace(/\s*по\s*\d{2}\.\d{2}\.\d{4}/, '')
+    .trim();
+
+  const timeInfo = {
+    customStartTime,
+    customEndTime
+  };
+  
+  return {
+    lessonName: cleanName,
+    type: type,
+    teacherName: teacher,
+    auditoryName: room,
+    isDistant: isDistant,
+    isStream: isStream,
+    isDivision: isDivision,
+    startDate: startDate,
+    endDate: endDate,
+    duration: 2,
+    durationMinutes: 90,
+    isShort: false,
+    isLecture: type === 'lecture',
+    originalText: subjectStr.trim(),
+    lessonNumber: lessonNumber,
+    defaultTime: defaultTime,
+    timeInfo: timeInfo
+  };
+}
+
+/**
  * Получает расписание для конкретного направления
  */
 function getDirectionSchedule(fileId) {
@@ -441,324 +771,6 @@ function getDirectionSchedule(fileId) {
       }
     }
     return null;
-  }
-
-  function getTimeSlotByNumber(number) {
-    const timeSlots = {
-      1: { start: "08:30", end: "10:05" },
-      2: { start: "10:15", end: "11:50" },
-      3: { start: "12:15", end: "13:50" },
-      4: { start: "14:00", end: "15:35" },
-      5: { start: "15:45", end: "17:20" },
-      6: { start: "17:30", end: "19:05" },
-      7: { start: "19:15", end: "20:50" }
-    };
-    
-    return timeSlots[number] || timeSlots[1];
-  }
-
-  function parseTime(timeStr, customTimeInfo = null) {
-    if (!timeStr) {
-      return {
-        number: 1,
-        startAt: "08:30",
-        endAt: "10:05",
-        timeRange: "08:30-10:05",
-        originalTimeTitle: "1. 08.30-10.05",
-        additionalSlots: []
-      };
-    }
-      
-      const timeSlots = {
-        1: { start: "08:30", end: "10:05" },
-        2: { start: "10:15", end: "11:50" },
-        3: { start: "12:15", end: "13:50" },
-        4: { start: "14:00", end: "15:35" },
-        5: { start: "15:45", end: "17:20" },
-      6: { start: "17:30", end: "19:05" },
-      7: { start: "19:15", end: "20:50" }
-    };
-
-    if (customTimeInfo) {
-      if (customTimeInfo.customEndTime) {
-        const timeParts = timeStr.split(',').map(part => part.trim());
-        if (timeParts.length > 1) {
-          const parsedSlots = timeParts.map(slot => {
-            const numberMatch = slot.match(/^(\d+)\./);
-            if (numberMatch) {
-              const number = parseInt(numberMatch[1]);
-              const timeSlot = timeSlots[number];
-              if (timeSlot) {
-                return {
-                  number: number,
-                  startAt: timeSlot.start,
-                  endAt: timeSlot.end,
-                  timeRange: `${timeSlot.start}-${timeSlot.end}`,
-                  originalTimeTitle: `${number}. ${timeSlot.start.replace(':', '.')}-${timeSlot.end.replace(':', '.')}`,
-                  additionalSlots: []
-                };
-              }
-            }
-            return null;
-          }).filter(Boolean);
-
-          if (parsedSlots.length > 0) {
-            return {
-              ...parsedSlots[0],
-              additionalSlots: parsedSlots.slice(1),
-              customEndTime: customTimeInfo.customEndTime
-            };
-          }
-        }
-      }
-    }
-
-    const numberOnlyMatch = timeStr.match(/^(\d+)$/);
-    if (numberOnlyMatch) {
-      const number = parseInt(numberOnlyMatch[1]);
-      const slot = timeSlots[number] || timeSlots[1];
-      return {
-        number: number,
-        startAt: slot.start,
-        endAt: slot.end,
-        timeRange: `${slot.start}-${slot.end}`,
-        originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
-        additionalSlots: []
-      };
-    }
-
-    const parenNumberMatch = timeStr.match(/\((\d+)\s*пара\)/);
-    if (parenNumberMatch) {
-      const number = parseInt(parenNumberMatch[1]);
-      const slot = timeSlots[number] || timeSlots[1];
-      return {
-        number: number,
-        startAt: slot.start,
-        endAt: slot.end,
-        timeRange: `${slot.start}-${slot.end}`,
-        originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
-        additionalSlots: []
-      };
-    }
-    
-    const dotNumberMatch = timeStr.match(/^(\d+)\./);
-    if (dotNumberMatch) {
-      const number = parseInt(dotNumberMatch[1]);
-      const slot = timeSlots[number] || timeSlots[1];
-      
-      const timeMatch = timeStr.match(/(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
-      if (timeMatch) {
-        const [_, startHour, startMin, endHour, endMin] = timeMatch;
-      return {
-          number: number,
-        startAt: `${startHour}:${startMin}`,
-        endAt: `${endHour}:${endMin}`,
-          timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`,
-          originalTimeTitle: timeStr,
-          additionalSlots: []
-        };
-      }
-        
-        return {
-          number: number,
-          startAt: slot.start,
-          endAt: slot.end,
-          timeRange: `${slot.start}-${slot.end}`,
-          originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
-          additionalSlots: []
-      };
-    }
-
-    const slots = timeStr.split(',').map(slot => slot.trim());
-    const parsedSlots = slots.map(slot => {
-      const match = slot.match(/(\d+)\.\s*(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
-      if (!match) {
-        const numberMatch = slot.match(/(\d+)\./);
-        if (numberMatch) {
-          const number = parseInt(numberMatch[1]);
-          const timeSlot = timeSlots[number] || timeSlots[1];
-          return {
-            number: number,
-            startAt: timeSlot.start,
-            endAt: timeSlot.end,
-            timeRange: `${timeSlot.start}-${timeSlot.end}`
-        };
-      }
-      return null;
-      }
-      
-      const [_, number, startHour, startMin, endHour, endMin] = match;
-      return {
-        number: parseInt(number),
-        startAt: `${startHour}:${startMin}`,
-        endAt: `${endHour}:${endMin}`,
-        timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`
-      };
-    }).filter(slot => slot !== null);
-
-    if (parsedSlots.length === 0) {
-      return {
-        number: 1,
-        startAt: "08:30",
-        endAt: "10:05",
-        timeRange: "08:30-10:05",
-        originalTimeTitle: "1. 08.30-10.05",
-        additionalSlots: []
-      };
-    }
-    
-    return {
-      ...parsedSlots[0],
-      originalTimeTitle: timeStr,
-      additionalSlots: parsedSlots.slice(1)
-    };
-  }
-
-  function parseSubject(subjectStr, defaultTime = "") {
-    if (!subjectStr) return null;
-
-    const subjects = subjectStr.split(/\n\s*\n/).filter(Boolean);
-    if (subjects.length > 1) {
-      return subjects.map(s => {
-        const parsed = parseSubject(s, defaultTime);
-        if (parsed) {
-          parsed.isPartOfComposite = true;
-        }
-        return parsed;
-      }).filter(Boolean);
-    }
-    
-    const lowerSubject = subjectStr.toLowerCase();
-    const parts = subjectStr.split(',').map(p => p.trim());
-    let name = parts[0].trim();
-    
-    let customStartTime = null;
-    let customEndTime = null;
-    
-    const startTimeMatch = subjectStr.match(/с\s*(\d{2}):(\d{2})/);
-    if (startTimeMatch) {
-      customStartTime = `${startTimeMatch[1]}:${startTimeMatch[2]}`;
-    }
-    
-    const endTimeMatch = subjectStr.match(/до\s*(\d{2}):(\d{2})/);
-    if (endTimeMatch) {
-      customEndTime = `${endTimeMatch[1]}:${endTimeMatch[2]}`;
-    }
-    
-    const isDistant = lowerSubject.includes('дистант') || 
-                     lowerSubject.includes('онлайн') ||
-                     lowerSubject.includes('он-лайн') ||
-                     parts.some(part => part.trim().toLowerCase() === 'онлайн') ||
-                     parts.some(part => part.trim().toLowerCase() === 'он-лайн');
-    
-    const isStream = lowerSubject.includes('поток');
-    const isDivision = lowerSubject.includes('подгруппа');
-    
-    const isPhysicalEducation = name.toLowerCase().includes('физ') || 
-                               name.toLowerCase().includes('фк') || 
-                               name.toLowerCase().includes('физическ') ||
-                               name.toLowerCase().includes('элективные дисциплины по фк');
-    
-    let type = 'other';
-    if (isPhysicalEducation) {
-      type = 'practice';
-    } else {
-      type = lowerSubject.includes('лек') ? 'lecture' : 
-             lowerSubject.includes('практ') ? 'practice' : 'other';
-    }
-
-    let teacher = null;
-    const teacherRegexPatterns = [
-      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ][а-яё]+)\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\./,
-      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
-      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
-      /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s+([А-ЯЁ])\s+([А-ЯЁ][а-яё]+)/
-    ];
-
-    for (const pattern of teacherRegexPatterns) {
-      const match = subjectStr.match(pattern);
-      if (match) {
-        if (match[1].length > 1) {
-          teacher = `${match[1]} ${match[2]}.${match[3]}.`;
-        } else {
-          teacher = `${match[3]} ${match[1]}.${match[2]}.`;
-        }
-        break;
-      }
-    }
-
-    if (teacher) {
-      teacher = teacher.replace(/\s*\([^)]*\)/g, '')
-                      .replace(/\s+с\s+\d{2}:\d{2}/g, '')
-                      .replace(/\s+до\s+\d{2}\.\d{2}\.\d{4}/g, '')
-                      .replace(/\s+кроме\s+\d{2}\.\d{2}\.\d{4}/g, '')
-                      .trim();
-    }
-    
-    let subjectWithoutDates = subjectStr.replace(/(?:с|по)\s*\d{2}\.\d{2}\.\d{4}/g, '');
-    
-    const buildingMatch = subjectWithoutDates.match(/(\d+)(?:-[её]|е|ое)?\s*(?:уч\.?|учебное)?\s*зд(?:ание)?\.?/i);
-    const building = buildingMatch ? buildingMatch[1] : null;
-    
-    let room = null;
-    const roomMatch = subjectWithoutDates.match(/,\s*(?:ауд\.)?\s*(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)\s*(?:\(|$|,|\s+|ЕГФ|гл\.з\.)/);
-    const sportHallMatch = subjectWithoutDates.match(/(?:спорт\.?\s*зал|спортзал|спортивный\s*зал)/i);
-    
-    if (roomMatch) {
-      room = roomMatch[1];
-    } else if (sportHallMatch) {
-      room = "спортзал";
-    }
-    
-    if (building && room) {
-      room = `${building}-${room}`;
-    }
-    
-    const startDateMatch = subjectStr.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
-    const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
-    const startDate = startDateMatch ? startDateMatch[1] : null;
-    const endDate = endDateMatch ? endDateMatch[1] : null;
-    
-    const lessonNumberMatch = subjectStr.match(/\((\d+)\s*пара\)/);
-    const lessonNumber = lessonNumberMatch ? parseInt(lessonNumberMatch[1]) : null;
-    
-    let cleanName = name;
-    
-    cleanName = cleanName
-      .replace(/\s*\(лекции\)/i, '')
-      .replace(/\s*лек\./i, '')
-      .replace(/\s*практ\./i, '')
-      .replace(/\s*\(\d+\s*пара\)/, '')
-      .replace(/\s*с\s*\d{2}:\d{2}/, '')
-      .replace(/\s*до\s*\d{2}:\d{2}/, '')
-      .replace(/\s*с\s*\d{2}\.\d{2}\.\d{4}/, '')
-      .replace(/\s*по\s*\d{2}\.\d{2}\.\d{4}/, '')
-      .trim();
-
-    const timeInfo = {
-      customStartTime,
-      customEndTime
-    };
-    
-    return {
-      lessonName: cleanName,
-      type: type,
-      teacherName: teacher,
-      auditoryName: room,
-      isDistant: isDistant,
-      isStream: isStream,
-      isDivision: isDivision,
-      startDate: startDate,
-      endDate: endDate,
-      duration: 2,
-      durationMinutes: 90,
-      isShort: false,
-      isLecture: type === 'lecture',
-      originalText: subjectStr.trim(),
-      lessonNumber: lessonNumber,
-      defaultTime: defaultTime,
-      timeInfo: timeInfo
-    };
   }
 
   let currentDay = null;
@@ -1118,7 +1130,7 @@ function updateTeachersAndAuditories() {
   const existingAuditories = new Map();
   for (let i = 1; i < auditoriesData.length; i++) {
     existingAuditories.set(String(auditoriesData[i][0]), {
-      number: auditoriesData[i][1],
+      number: auditorsData[i][1],
       schedule: JSON.parse(auditoriesData[i][3] || '[]'),
       history: JSON.parse(auditoriesData[i][4] || '[]')
     });
@@ -1130,74 +1142,54 @@ function updateTeachersAndAuditories() {
       const directionName = file.name.replace('.xlsx', '');
       
       schedule.items.forEach(item => {
+        const courseInfo = item.courseInfo;
+        
         item.days.forEach(day => {
-          const groupedLessons = [];
+          const dayType = day.info.type;
           
           day.lessons.forEach(lesson => {
-            const parsedSubjects = parseSubject(lesson.subject, lesson.time);
-            if (Array.isArray(parsedSubjects)) {
-              parsedSubjects.forEach(parsedSubject => {
-                const timeInfo = parsedSubject.lessonNumber ? 
-                  parseTime(`${parsedSubject.lessonNumber}`, parsedSubject.timeInfo) : 
-                  parseTime(parsedSubject.defaultTime, parsedSubject.timeInfo);
-                if (timeInfo) {
-                  if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
-                    groupedLessons.push({
-                      ...timeInfo,
-                      ...parsedSubject
-                    });
-                    
-                    timeInfo.additionalSlots.forEach(slot => {
-                      groupedLessons.push({
-                        ...slot,
-                        ...parsedSubject,
-                        originalTimeTitle: slot.originalTimeTitle || slot.timeRange
-                      });
-              });
-            } else {
-                    groupedLessons.push({
-                      ...timeInfo,
-                      ...parsedSubject
-                    });
-                  }
-            }
-          });
-            } else if (parsedSubjects) {
-              const timeInfo = parseTime(lesson.time, parsedSubjects.timeInfo);
-              if (timeInfo) {
-                if (timeInfo.additionalSlots && timeInfo.additionalSlots.length > 0) {
-                  groupedLessons.push({
-                    ...timeInfo,
-                    ...parsedSubjects
-                  });
-                  
-                  timeInfo.additionalSlots.forEach(slot => {
-                    groupedLessons.push({
-                      ...slot,
-                      ...parsedSubjects,
-                      originalTimeTitle: slot.originalTimeTitle || slot.timeRange
-                    });
-                  });
-                } else {
-                  groupedLessons.push({
-                    ...timeInfo,
-                    ...parsedSubjects
-              });
-            }
+            if (lesson.teacherName) {
+              const teacherId = lesson.teacherName.replace(/\s+/g, '_').toLowerCase();
+              if (!teachersMap.has(teacherId)) {
+                teachersMap.set(teacherId, {
+                  name: lesson.teacherName,
+                  schedule: []
+                });
               }
+              
+              const teacher = teachersMap.get(teacherId);
+              teacher.schedule.push({
+                day: dayType,
+                time: lesson.timeRange,
+                subject: lesson.lessonName,
+                type: lesson.type,
+                auditory: lesson.auditoryName,
+                group: courseInfo.number,
+                direction: directionName
+              });
+            }
+            
+            if (lesson.auditoryName) {
+              const auditoryId = lesson.auditoryName.replace(/\s+/g, '_').toLowerCase();
+              if (!auditoriesMap.has(auditoryId)) {
+                auditoriesMap.set(auditoryId, {
+                  number: lesson.auditoryName,
+                  schedule: []
+                });
+              }
+              
+              const auditory = auditoriesMap.get(auditoryId);
+              auditory.schedule.push({
+                day: dayType,
+                time: lesson.timeRange,
+                subject: lesson.lessonName,
+                type: lesson.type,
+                teacher: lesson.teacherName,
+                group: courseInfo.number,
+                direction: directionName
+              });
             }
           });
-
-          groupedLessons.sort((a, b) => {
-            if (a.number === b.number) {
-              if (a.type === 'lecture' && b.type !== 'lecture') return -1;
-              if (a.type !== 'lecture' && b.type === 'lecture') return 1;
-              return 0;
-            }
-            return a.number - b.number;
-          });
-          
-          day.lessons = groupedLessons;
         });
       });
     } catch (e) {
@@ -1358,9 +1350,9 @@ function updateTeachersAndAuditories() {
   
   if (updatedAuditoryRows.length > 0) {
     updatedAuditoryRows.forEach(row => {
-      const existingRow = auditoriesData.findIndex((r, i) => i > 0 && String(r[0]) === String(row.id));
+      const existingRow = auditorsData.findIndex((r, i) => i > 0 && String(r[0]) === String(row.id));
       if (existingRow > 0) {
-        auditoriesSheet.getRange(existingRow + 1, 1, 1, 5).setValues([[
+        auditorsSheet.getRange(existingRow + 1, 1, 1, 5).setValues([[
           row.id,
           row.number,
           row.lastUpdate,
@@ -1368,7 +1360,7 @@ function updateTeachersAndAuditories() {
           row.history
         ]]);
       } else {
-        auditoriesSheet.appendRow([
+        auditorsSheet.appendRow([
           row.id,
           row.number,
           row.lastUpdate,
@@ -1607,6 +1599,8 @@ function getTeachers() {
     });
   }
   
+  teachers.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  
   const jsonData = JSON.stringify(teachers);
   cache.put('teachers_list', jsonData, 300);
   
@@ -1633,9 +1627,26 @@ function getAuditories() {
   for (let i = 1; i < data.length; i++) {
     auditories.push({
       id: data[i][0],
-      number: data[i][1]
+      number: String(data[i][1])
     });
   }
+  
+  auditories.sort((a, b) => {
+    const numMatchA = String(a.number).match(/\d+/);
+    const numMatchB = String(b.number).match(/\d+/);
+    
+    if (!numMatchA || !numMatchB) {
+      return String(a.number).localeCompare(String(b.number), 'ru');
+    }
+    
+    const numA = parseInt(numMatchA[0]);
+    const numB = parseInt(numMatchB[0]);
+    
+    if (numA === numB) {
+      return String(a.number).localeCompare(String(b.number), 'ru');
+    }
+    return numA - numB;
+  });
   
   const jsonData = JSON.stringify(auditories);
   cache.put('auditories_list', jsonData, 300);
@@ -1668,6 +1679,8 @@ function getTeachersWithSchedule() {
     });
   }
   
+  teachers.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  
   const jsonData = JSON.stringify(teachers);
   cache.put('teachers_data', jsonData, 300);
   
@@ -1694,10 +1707,27 @@ function getAuditoriesWithSchedule() {
   for (let i = 1; i < data.length; i++) {
     auditories.push({
       id: data[i][0],
-      number: data[i][1],
+      number: String(data[i][1]),
       schedule: JSON.parse(data[i][3] || '[]')
     });
   }
+  
+  auditories.sort((a, b) => {
+    const numMatchA = String(a.number).match(/\d+/);
+    const numMatchB = String(b.number).match(/\d+/);
+    
+    if (!numMatchA || !numMatchB) {
+      return String(a.number).localeCompare(String(b.number), 'ru');
+    }
+    
+    const numA = parseInt(numMatchA[0]);
+    const numB = parseInt(numMatchB[0]);
+    
+    if (numA === numB) {
+      return String(a.number).localeCompare(String(b.number), 'ru');
+    }
+    return numA - numB;
+  });
   
   const jsonData = JSON.stringify(auditories);
   cache.put('auditories_data', jsonData, 300);
