@@ -371,37 +371,34 @@ function parseTime(timeStr, customTimeInfo = null) {
     7: { start: "19:15", end: "20:50" }
   };
 
-  if (customTimeInfo) {
-    if (customTimeInfo.customEndTime) {
-      const timeParts = timeStr.split(',').map(part => part.trim());
-      if (timeParts.length > 1) {
-        const parsedSlots = timeParts.map(slot => {
-          const numberMatch = slot.match(/^(\d+)\./);
-          if (numberMatch) {
-            const number = parseInt(numberMatch[1]);
-            const timeSlot = timeSlots[number];
-            if (timeSlot) {
-              return {
-                number: number,
-                startAt: timeSlot.start,
-                endAt: timeSlot.end,
-                timeRange: `${timeSlot.start}-${timeSlot.end}`,
-                originalTimeTitle: `${number}. ${timeSlot.start.replace(':', '.')}-${timeSlot.end.replace(':', '.')}`,
-                additionalSlots: []
-              };
-            }
-          }
-          return null;
-        }).filter(Boolean);
-
-        if (parsedSlots.length > 0) {
+  const slots = timeStr.split(',').map(s => s.trim());
+  
+  if (slots.length > 1) {
+    const parsedSlots = slots.map(slot => {
+      const numberMatch = slot.match(/^(\d+)\./);
+      if (numberMatch) {
+        const number = parseInt(numberMatch[1]);
+        const timeSlot = timeSlots[number];
+        if (timeSlot) {
           return {
-            ...parsedSlots[0],
-            additionalSlots: parsedSlots.slice(1),
-            customEndTime: customTimeInfo.customEndTime
+            number: number,
+            startAt: timeSlot.start,
+            endAt: timeSlot.end,
+            timeRange: `${timeSlot.start}-${timeSlot.end}`,
+            originalTimeTitle: `${number}. ${timeSlot.start.replace(':', '.')}-${timeSlot.end.replace(':', '.')}`
           };
         }
       }
+      return null;
+    }).filter(Boolean);
+
+    if (parsedSlots.length > 0) {
+      const mainSlot = parsedSlots[0];
+      return {
+        ...mainSlot,
+        originalTimeTitle: timeStr,
+        additionalSlots: parsedSlots.slice(1)
+      };
     }
   }
 
@@ -414,7 +411,7 @@ function parseTime(timeStr, customTimeInfo = null) {
       startAt: slot.start,
       endAt: slot.end,
       timeRange: `${slot.start}-${slot.end}`,
-      originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+      originalTimeTitle: timeStr,
       additionalSlots: []
     };
   }
@@ -428,7 +425,7 @@ function parseTime(timeStr, customTimeInfo = null) {
       startAt: slot.start,
       endAt: slot.end,
       timeRange: `${slot.start}-${slot.end}`,
-      originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+      originalTimeTitle: timeStr,
       additionalSlots: []
     };
   }
@@ -456,53 +453,18 @@ function parseTime(timeStr, customTimeInfo = null) {
       startAt: slot.start,
       endAt: slot.end,
       timeRange: `${slot.start}-${slot.end}`,
-      originalTimeTitle: `${number}. ${slot.start.replace(':', '.')}-${slot.end.replace(':', '.')}`,
+      originalTimeTitle: timeStr,
       additionalSlots: []
     };
   }
 
-  const slots = timeStr.split(',').map(slot => slot.trim());
-  const parsedSlots = slots.map(slot => {
-    const match = slot.match(/(\d+)\.\s*(\d{2})\.(\d{2})-(\d{2})\.(\d{2})/);
-    if (!match) {
-      const numberMatch = slot.match(/(\d+)\./);
-      if (numberMatch) {
-        const number = parseInt(numberMatch[1]);
-        const timeSlot = timeSlots[number] || timeSlots[1];
-        return {
-          number: number,
-          startAt: timeSlot.start,
-          endAt: timeSlot.end,
-          timeRange: `${timeSlot.start}-${timeSlot.end}`
-        };
-      }
-      return null;
-    }
-    
-    const [_, number, startHour, startMin, endHour, endMin] = match;
-    return {
-      number: parseInt(number),
-      startAt: `${startHour}:${startMin}`,
-      endAt: `${endHour}:${endMin}`,
-      timeRange: `${startHour}:${startMin}-${endHour}:${endMin}`
-    };
-  }).filter(slot => slot !== null);
-
-  if (parsedSlots.length === 0) {
-    return {
-      number: 1,
-      startAt: "08:30",
-      endAt: "10:05",
-      timeRange: "08:30-10:05",
-      originalTimeTitle: "1. 08.30-10.05",
-      additionalSlots: []
-    };
-  }
-  
   return {
-    ...parsedSlots[0],
+    number: 1,
+    startAt: "08:30",
+    endAt: "10:05",
+    timeRange: "08:30-10:05",
     originalTimeTitle: timeStr,
-    additionalSlots: parsedSlots.slice(1)
+    additionalSlots: []
   };
 }
 
@@ -511,6 +473,44 @@ function parseTime(timeStr, customTimeInfo = null) {
  */
 function parseSubject(subjectStr, defaultTime = "") {
   if (!subjectStr) return null;
+
+  const languagePattern = /([А-ЯЁ][а-яё]+(?:\s+[а-яё]+)*\s+язык),\s*(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)/g;
+  const languageMatches = [...subjectStr.matchAll(languagePattern)];
+  
+  if (languageMatches.length > 1) {
+    const subjects = [];
+    let lastIndex = 0;
+    let currentText = '';
+    
+    for (const match of languageMatches) {
+      if (match.index > lastIndex) {
+        if (currentText) {
+          const parsed = parseSubject(currentText, defaultTime);
+          if (parsed) {
+            parsed.isPartOfComposite = true;
+            subjects.push(parsed);
+          }
+        }
+      }
+      
+      const nextMatch = languageMatches.find(m => m.index > match.index);
+      const endIndex = nextMatch ? nextMatch.index : subjectStr.length;
+      currentText = subjectStr.substring(match.index, endIndex);
+      lastIndex = match.index;
+    }
+    
+    if (currentText) {
+      const parsed = parseSubject(currentText, defaultTime);
+      if (parsed) {
+        parsed.isPartOfComposite = true;
+        subjects.push(parsed);
+      }
+    }
+    
+    if (subjects.length > 0) {
+      return subjects;
+    }
+  }
 
   const subjects = subjectStr.split(/\n\s*\n/).filter(Boolean);
   if (subjects.length > 1) {
@@ -562,7 +562,7 @@ function parseSubject(subjectStr, defaultTime = "") {
            lowerSubject.includes('практ') ? 'practice' : 'other';
   }
 
-  let teacher = null;
+  let teachers = [];
   const teacherRegexPatterns = [
     /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ][а-яё]+)\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\./,
     /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ])\s*\.\s*([А-ЯЁ][а-яё]+)/,
@@ -570,27 +570,31 @@ function parseSubject(subjectStr, defaultTime = "") {
     /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s+([А-ЯЁ])\s+([А-ЯЁ][а-яё]+)/
   ];
 
+  let remainingText = subjectStr;
+
   for (const pattern of teacherRegexPatterns) {
-    const match = subjectStr.match(pattern);
-    if (match) {
+    const matches = [...remainingText.matchAll(new RegExp(pattern, 'g'))];
+    for (const match of matches) {
+      let teacher;
       if (match[1].length > 1) {
         teacher = `${match[1]} ${match[2]}.${match[3]}.`;
       } else {
         teacher = `${match[3]} ${match[1]}.${match[2]}.`;
       }
-      break;
+      
+      teacher = teacher.replace(/\s*\([^)]*\)/g, '')
+                      .replace(/\s+с\s+\d{2}:\d{2}/g, '')
+                      .replace(/\s+до\s+\d{2}\.\d{2}\.\d{4}/g, '')
+                      .replace(/\s+кроме\s+\d{2}\.\d{2}\.\d{4}/g, '')
+                      .trim();
+      
+      if (!teachers.includes(teacher)) {
+        teachers.push(teacher);
+      }
     }
   }
 
-  if (teacher) {
-    teacher = teacher.replace(/\s*\([^)]*\)/g, '')
-                    .replace(/\s+с\s+\d{2}:\d{2}/g, '')
-                    .replace(/\s+до\s+\d{2}\.\d{2}\.\d{4}/g, '')
-                    .replace(/\s+кроме\s+\d{2}\.\d{2}\.\d{4}/g, '')
-                    .trim();
-  }
-  
-  let subjectWithoutDates = subjectStr.replace(/(?:с|по)\s*\d{2}\.\d{2}\.\d{4}/g, '');
+  let subjectWithoutDates = subjectStr.replace(/(?:с|по|до)\s*\d{2}\.\d{2}\.\d{4}/g, '');
   
   const buildingMatch = subjectWithoutDates.match(/(\d+)(?:-[её]|е|ое)?\s*(?:уч\.?|учебное)?\s*зд(?:ание)?\.?/i);
   const building = buildingMatch ? buildingMatch[1] : null;
@@ -610,7 +614,7 @@ function parseSubject(subjectStr, defaultTime = "") {
   }
   
   const startDateMatch = subjectStr.match(/с\s*(\d{2}\.\d{2}\.\d{4})/);
-  const endDateMatch = subjectStr.match(/по\s*(\d{2}\.\d{2}\.\d{4})/);
+  const endDateMatch = subjectStr.match(/(?:по|до)\s*(\d{2}\.\d{2}\.\d{4})/);
   const startDate = startDateMatch ? startDateMatch[1] : null;
   const endDate = endDateMatch ? endDateMatch[1] : null;
   
@@ -638,7 +642,7 @@ function parseSubject(subjectStr, defaultTime = "") {
   return {
     lessonName: cleanName,
     type: type,
-    teacherName: teacher,
+    teacherName: teachers.join(', '),
     auditoryName: room,
     isDistant: isDistant,
     isStream: isStream,
