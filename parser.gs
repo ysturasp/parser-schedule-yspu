@@ -1134,7 +1134,7 @@ function updateTeachersAndAuditories() {
   const existingAuditories = new Map();
   for (let i = 1; i < auditoriesData.length; i++) {
     existingAuditories.set(String(auditoriesData[i][0]), {
-      number: auditorsData[i][1],
+      number: auditoriesData[i][1],
       schedule: JSON.parse(auditoriesData[i][3] || '[]'),
       history: JSON.parse(auditoriesData[i][4] || '[]')
     });
@@ -1354,9 +1354,9 @@ function updateTeachersAndAuditories() {
   
   if (updatedAuditoryRows.length > 0) {
     updatedAuditoryRows.forEach(row => {
-      const existingRow = auditorsData.findIndex((r, i) => i > 0 && String(r[0]) === String(row.id));
+      const existingRow = auditoriesData.findIndex((r, i) => i > 0 && String(r[0]) === String(row.id));
       if (existingRow > 0) {
-        auditorsSheet.getRange(existingRow + 1, 1, 1, 5).setValues([[
+        auditoriesSheet.getRange(existingRow + 1, 1, 1, 5).setValues([[
           row.id,
           row.number,
           row.lastUpdate,
@@ -1364,7 +1364,7 @@ function updateTeachersAndAuditories() {
           row.history
         ]]);
       } else {
-        auditorsSheet.appendRow([
+        auditoriesSheet.appendRow([
           row.id,
           row.number,
           row.lastUpdate,
