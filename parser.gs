@@ -529,15 +529,19 @@ function parseSubject(subjectStr, defaultTime = "") {
   
   let customStartTime = null;
   let customEndTime = null;
+  let unparsedText = new Set();
+  let remainingText = subjectStr;
   
   const startTimeMatch = subjectStr.match(/с\s*(\d{2}):(\d{2})/);
   if (startTimeMatch) {
     customStartTime = `${startTimeMatch[1]}:${startTimeMatch[2]}`;
+    remainingText = remainingText.replace(startTimeMatch[0], '');
   }
   
   const endTimeMatch = subjectStr.match(/до\s*(\d{2}):(\d{2})/);
   if (endTimeMatch) {
     customEndTime = `${endTimeMatch[1]}:${endTimeMatch[2]}`;
+    remainingText = remainingText.replace(endTimeMatch[0], '');
   }
   
   const isDistant = lowerSubject.includes('дистант') || 
@@ -570,8 +574,6 @@ function parseSubject(subjectStr, defaultTime = "") {
     /(?:доц\.|проф\.|ст\.преп\.|асс\.|преп\.)?\s*([А-ЯЁ])\s+([А-ЯЁ])\s+([А-ЯЁ][а-яё]+)/
   ];
 
-  let remainingText = subjectStr;
-
   for (const pattern of teacherRegexPatterns) {
     const matches = [...remainingText.matchAll(new RegExp(pattern, 'g'))];
     for (const match of matches) {
@@ -591,13 +593,17 @@ function parseSubject(subjectStr, defaultTime = "") {
       if (!teachers.includes(teacher)) {
         teachers.push(teacher);
       }
+      remainingText = remainingText.replace(match[0], '');
     }
   }
 
-  let subjectWithoutDates = subjectStr.replace(/(?:с|по|до)\s*\d{2}\.\d{2}\.\d{4}/g, '');
+  let subjectWithoutDates = remainingText.replace(/(?:с|по|до)\s*\d{2}\.\d{2}\.\d{4}/g, '');
   
   const buildingMatch = subjectWithoutDates.match(/(\d+)(?:-[её]|е|ое)?\s*(?:уч\.?|учебное)?\s*зд(?:ание)?\.?/i);
   const building = buildingMatch ? buildingMatch[1] : null;
+  if (buildingMatch) {
+    remainingText = remainingText.replace(buildingMatch[0], '');
+  }
   
   let room = null;
   const roomMatch = subjectWithoutDates.match(/,\s*(?:ауд\.)?\s*(\d+[МАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЩЭЮЯ]?)\s*(?:\(|$|,|\s+|ЕГФ|гл\.з\.)/);
@@ -605,8 +611,10 @@ function parseSubject(subjectStr, defaultTime = "") {
   
   if (roomMatch) {
     room = roomMatch[1];
+    remainingText = remainingText.replace(roomMatch[0], '');
   } else if (sportHallMatch) {
     room = "спортзал";
+    remainingText = remainingText.replace(sportHallMatch[0], '');
   }
   
   if (building && room) {
@@ -618,8 +626,13 @@ function parseSubject(subjectStr, defaultTime = "") {
   const startDate = startDateMatch ? startDateMatch[1] : null;
   const endDate = endDateMatch ? endDateMatch[1] : null;
   
+  if (startDateMatch) remainingText = remainingText.replace(startDateMatch[0], '');
+  if (endDateMatch) remainingText = remainingText.replace(endDateMatch[0], '');
+  
   const lessonNumberMatch = subjectStr.match(/\((\d+)\s*пара\)/);
   const lessonNumber = lessonNumberMatch ? parseInt(lessonNumberMatch[1]) : null;
+  
+  if (lessonNumberMatch) remainingText = remainingText.replace(lessonNumberMatch[0], '');
   
   let cleanName = name;
   
@@ -633,6 +646,23 @@ function parseSubject(subjectStr, defaultTime = "") {
     .replace(/\s*с\s*\d{2}\.\d{2}\.\d{4}/, '')
     .replace(/\s*по\s*\d{2}\.\d{2}\.\d{4}/, '')
     .trim();
+
+  remainingText = remainingText
+    .replace(/,+/g, ',')
+    .replace(/\s+/g, ' ')
+    .replace(/^\s*,\s*/, '')
+    .replace(/\s*,\s*$/, '')
+    .replace(/лекция/gi, '')
+    .replace(/практика/gi, '')
+    .replace(/онлайн/gi, '')
+    .replace(/дистант/gi, '')
+    .replace(/поток/gi, '')
+    .replace(/подгруппа/gi, '')
+    .trim();
+
+  if (remainingText) {
+    unparsedText.add(remainingText);
+  }
 
   const timeInfo = {
     customStartTime,
@@ -656,7 +686,8 @@ function parseSubject(subjectStr, defaultTime = "") {
     originalText: subjectStr.trim(),
     lessonNumber: lessonNumber,
     defaultTime: defaultTime,
-    timeInfo: timeInfo
+    timeInfo: timeInfo,
+    unparsedText: Array.from(unparsedText).join('; ')
   };
 }
 
